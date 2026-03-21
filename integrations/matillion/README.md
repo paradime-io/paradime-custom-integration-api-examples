@@ -2,6 +2,8 @@
 
 This integration parses Matillion orchestration pipelines (`.orch.yaml` files) from a GitHub repository and creates Paradime SDK nodes showing lineage from Matillion load jobs through to dbt source models.
 
+![Matillion lineage in Paradime](matillion_lineage.png)
+
 ## Features
 
 - 📥 **Automatic Repo Download**: Downloads Matillion pipeline repos via ZIP (no Git required)
