@@ -83,7 +83,7 @@ pre-PR checklist.
 
 ---
 
-## Available Integrations
+## Available Integrations Examples
 
 | Integration | What it parses | Lineage direction |
 |-------------|----------------|-------------------|
