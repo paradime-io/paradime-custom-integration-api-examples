@@ -1,0 +1,12 @@
+[
+  {
+    "node_type": "ParentNode",
+    "icon_name": "share-2",
+    "color": "GREEN"
+  },
+  {
+    "node_type": "ChildNode",
+    "icon_name": "database",
+    "color": "ORANGE"
+  }
+]

@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "paradime-custom-integration-api"
+version = "0.1.0"
+description = "Custom lineage integrations for Paradime — connect external tools (Matillion, Streamlit, and more) to the Paradime lineage graph"
+authors = ["Fabio Di Leta <fabio@paradime.io>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+sqlglot = "^25.0.0"
+duckdb = "^1.0.0"
+polars = "^1.0.0"
+pyarrow = "^18.0.0"
+paradime-io = "^4.18.0"
+filelock = "^3.13.0"
+GitPython = "^3.1.40"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+black = "^24.0.0"
+ruff = "^0.5.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,12 @@
+[
+  {
+    "node_type": "App",
+    "icon_name": "rocket",
+    "color": "CYAN"
+  },
+  {
+    "node_type": "Chart",
+    "icon_name": "chart-bar",
+    "color": "MANDY"
+  }
+]
