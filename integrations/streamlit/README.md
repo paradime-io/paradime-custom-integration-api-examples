@@ -2,6 +2,8 @@
 
 This integration parses Streamlit applications to extract SQL queries and creates Paradime SDK nodes showing lineage from Streamlit charts back to dbt models.
 
+![Streamlit lineage in Paradime](streamlit_lineage.png)
+
 ## Features
 
 - 📥 **Automatic Repo Download**: Downloads Streamlit repos via ZIP (no Git required)
