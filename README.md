@@ -90,6 +90,17 @@ pre-PR checklist.
 | [Matillion](integrations/matillion/README.md) | `.orch.yaml` orchestration pipeline files | Matillion Job → Snowflake table → dbt source |
 | [Streamlit](integrations/streamlit/README.md) | Streamlit `.py` app files | dbt model → Streamlit chart |
 
+
+### Matillion
+Parses Matillion orchestration pipelines and maps every load job to the Snowflake table it writes — creating lineage that flows directly into your dbt sources.
+
+![Matillion lineage in Paradime](integrations/matillion/matillion_lineage.png)
+
+### Streamlit
+Parses Streamlit Python apps, extracts SQL queries and chart calls, and links each visualisation back to the upstream dbt model that powers it.
+
+![Streamlit lineage in Paradime](integrations/streamlit/streamlit_lineage.png)
+
 ---
 
 ## Repository Structure
