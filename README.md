@@ -89,7 +89,7 @@ pre-PR checklist.
 |-------------|----------------|-------------------|
 | [Matillion](integrations/matillion/README.md) | `.orch.yaml` orchestration pipeline files | Matillion Job → Snowflake table → dbt source |
 | [Streamlit](integrations/streamlit/README.md) | Streamlit `.py` app files | dbt model → Streamlit chart |
-
+| [Snowflake Notebooks](integrations/snowflake_notebooks/README.md) | Snowflake Notebook `.ipynb` files | dbt model → Notebook Cell → Notebook |
 
 ### Matillion
 Parses Matillion orchestration pipelines and maps every load job to the Snowflake table it writes — creating lineage that flows directly into your dbt sources.
@@ -101,6 +101,10 @@ Parses Streamlit Python apps, extracts SQL queries and chart calls, and links ea
 
 ![Streamlit lineage in Paradime](integrations/streamlit/streamlit_lineage.png)
 
+### Snowflake Notebooks
+Parses Snowflake Notebook `.ipynb` files, extracts SQL table references from SQL cells (including `%%sql` magic syntax), and links each cell back to the upstream dbt model output tables it queries.
+
+![Snowflake Notebooks lineage in Paradime](integrations/snowflake_notebooks/snowflake_notebooks_lineage.png)
 ---
 
 ## Repository Structure
@@ -126,15 +130,26 @@ paradime_custom_integration_api/
 │   ├── matillion/                   ← Example: Matillion integration (tool feeds dbt)
 │   │   └── ...
 │   │
-│   └── streamlit/                   ← Example: Streamlit integration (dbt feeds tool)
+│   ├── streamlit/                   ← Example: Streamlit integration (dbt feeds tool)
+│   │   └── ...
+│   │
+│   └── snowflake_notebooks/         ← Example: Snowflake Notebooks integration (dbt feeds tool)
 │       └── ...
 │
-└── src/                             ← Shared parsing utilities
+└── src/                             ← Parser library — one sub-package per integration
     └── parsers/
+        ├── _template/
+        │   ├── __init__.py          ← Template parser exports
+        │   └── parser.py            ← Template parser stub
         ├── matillion/
+        │   ├── __init__.py
         │   └── parser.py            ← Matillion YAML parser
-        └── streamlit/
-            └── parser.py            ← Streamlit SQL/AST parser
+        ├── streamlit/
+        │   ├── __init__.py
+        │   └── parser.py            ← Streamlit SQL/AST parser
+        └── snowflake_notebooks/
+            ├── __init__.py
+            └── parser.py            ← Snowflake Notebooks .ipynb parser
 ```
 
 ---
@@ -227,7 +242,9 @@ See each integration's `README.md` and `QUICK_START.md` for full details.
 | **Fastest** | Open [DINOAI_PROMPT.md](DINOAI_PROMPT.md), fill in the prompt, paste it into DinoAI — all 6 files are generated automatically |
 | **Manual** | Follow the step-by-step in [CONTRIBUTING.md](CONTRIBUTING.md), using `integrations/_template/` as your starting point |
 
-The existing [Matillion](integrations/matillion/README.md) and
-[Streamlit](integrations/streamlit/README.md) integrations are fully working
-reference implementations — read their `parse.py` files to see both lineage
-directions (tool → dbt and dbt → tool) in practice.
+The existing [Matillion](integrations/matillion/README.md),
+[Streamlit](integrations/streamlit/README.md), and
+[Snowflake Notebooks](integrations/snowflake_notebooks/README.md) integrations
+are fully working reference implementations — read their `parse.py` and
+`src/parsers/` files to see both lineage directions (tool → dbt and dbt → tool)
+and the two-layer parser architecture in practice.

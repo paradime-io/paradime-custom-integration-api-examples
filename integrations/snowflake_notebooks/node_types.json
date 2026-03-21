@@ -1,0 +1,12 @@
+[
+  {
+    "node_type": "Notebook",
+    "icon_name": "book-open",
+    "color": "CYAN"
+  },
+  {
+    "node_type": "Cell",
+    "icon_name": "code",
+    "color": "TEAL"
+  }
+]
