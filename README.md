@@ -68,8 +68,7 @@ Follow the step-by-step guide in [CONTRIBUTING.md](CONTRIBUTING.md):
 
 ```bash
 # 1. Copy the template
-cp -r paradime_custom_integration_api/integrations/_template \
-      paradime_custom_integration_api/integrations/my_tool
+cp -r integrations/_template integrations/my_tool
 
 # 2. Fill in integration.json, node_types.json
 # 3. Implement parse.py (parsing logic + lineage mapping)
@@ -110,7 +109,7 @@ Parses Snowflake Notebook `.ipynb` files, extracts SQL table references from SQL
 ## Repository Structure
 
 ```
-paradime_custom_integration_api/
+./
 │
 ├── README.md                        ← You are here
 ├── CONTRIBUTING.md                  ← How to build a new integration (full guide)
@@ -216,8 +215,14 @@ Every node sent to Paradime has this shape:
 ## Quick Start (Run an Existing Integration)
 
 ```bash
+# 0. Get the examples (run this in the Paradime IDE terminal)
+curl -L https://github.com/paradime-io/paradime-custom-integration-api-examples/archive/refs/heads/main.zip \
+     -o paradime-custom-integration-api-examples.zip
+unzip paradime-custom-integration-api-examples.zip && \
+     mv paradime-custom-integration-api-examples-main paradime-custom-integration-api-examples
+cd paradime-custom-integration-api-examples
+
 # 1. Install dependencies
-cd paradime_custom_integration_api
 poetry install
 
 # 2. Set credentials

@@ -1,14 +1,23 @@
 # Quick Start Guide – Matillion Integration
 
-## 🚀 Get Started in 3 Steps
+## 🚀 Get Started in 4 Steps
 
-### Step 1: Install Dependencies
+### Step 1: Download the Examples
+Run this in the **Paradime IDE terminal** to get the repository:
 ```bash
-cd paradime_custom_integration_api
+curl -L https://github.com/paradime-io/paradime-custom-integration-api-examples/archive/refs/heads/main.zip \
+     -o paradime-custom-integration-api-examples.zip
+unzip paradime-custom-integration-api-examples.zip && \
+     mv paradime-custom-integration-api-examples-main paradime-custom-integration-api-examples
+cd paradime-custom-integration-api-examples
+```
+
+### Step 2: Install Dependencies
+```bash
 poetry install
 ```
 
-### Step 2: Set Environment Variables
+### Step 3: Set Environment Variables
 ```bash
 # GitHub access (for private repos)
 export GITHUB_TOKEN="ghp_your_token_here"
@@ -19,7 +28,7 @@ export PARADIME_API_KEY="your_api_key"
 export PARADIME_API_SECRET="your_api_secret"
 ```
 
-### Step 3: Run the Full Pipeline
+### Step 4: Run the Full Pipeline
 ```bash
 cd integrations/matillion
 python run_full_pipeline.py
