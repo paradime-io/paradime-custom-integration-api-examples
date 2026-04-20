@@ -173,19 +173,19 @@ The `%%sql` magic header used by Snowflake Notebooks is automatically stripped b
 ### Option 1: Full Pipeline (Parse + Upload) — Recommended
 ```bash
 cd integrations/snowflake_notebooks
-python run_full_pipeline.py
+poetry run python run_full_pipeline.py
 ```
 
 ### Option 2: Parse Only (generates `target/snowflake_notebooks_nodes.json`)
 ```bash
 cd integrations/snowflake_notebooks
-python parse.py
+poetry run python parse.py
 ```
 
 ### Option 3: Upload Only (requires existing `target/snowflake_notebooks_nodes.json`)
 ```bash
 cd integrations/snowflake_notebooks
-python upload_to_paradime.py
+poetry run python upload_to_paradime.py
 ```
 
 ---

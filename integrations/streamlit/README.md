@@ -140,19 +140,19 @@ Any path not found in the downloaded repo is **skipped with a warning** (the run
 ### Option 1: Full Pipeline (Parse + Upload) — Recommended
 ```bash
 cd integrations/streamlit
-python run_full_pipeline.py
+poetry run python run_full_pipeline.py
 ```
 
 ### Option 2: Parse Only (generates `target/streamlit_nodes.json`)
 ```bash
 cd integrations/streamlit
-python parse.py
+poetry run python parse.py
 ```
 
 ### Option 3: Upload Only (requires existing `target/streamlit_nodes.json`)
 ```bash
 cd integrations/streamlit
-python upload_to_paradime.py
+poetry run python upload_to_paradime.py
 ```
 
 ---
@@ -166,7 +166,7 @@ python upload_to_paradime.py
 | `parse.py`              | Main parsing script                                                  |
 | `upload_to_paradime.py` | Uploads `target/streamlit_nodes.json` to Paradime                    |
 | `run_full_pipeline.py`  | Full parse + upload pipeline                                         |
-| `run_integration.py`    | Parse-only runner (alias for `python parse.py`)                      |
+| `run_integration.py`    | Parse-only runner (alias for `poetry run python parse.py`)                      |
 | `README.md`             | This file                                                            |
 | `QUICK_START.md`        | Minimal quick-start guide                                            |
 

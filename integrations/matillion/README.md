@@ -126,19 +126,19 @@ If a path in the filter doesn't exist in the repo, it is skipped with a warning.
 ### Option 1: Full Pipeline (Parse + Upload) — Recommended
 ```bash
 cd integrations/matillion
-python run_full_pipeline.py
+poetry run python run_full_pipeline.py
 ```
 
 ### Option 2: Parse Only (generates `target/matillion_nodes.json`)
 ```bash
 cd integrations/matillion
-python parse.py
+poetry run python parse.py
 ```
 
 ### Option 3: Upload Only (requires existing `target/matillion_nodes.json`)
 ```bash
 cd integrations/matillion
-python upload_to_paradime.py
+poetry run python upload_to_paradime.py
 ```
 
 ---
@@ -152,7 +152,7 @@ python upload_to_paradime.py
 | `parse.py`              | Main parsing script                                                   |
 | `upload_to_paradime.py` | Uploads `target/matillion_nodes.json` to Paradime                     |
 | `run_full_pipeline.py`  | Full parse + upload pipeline                                          |
-| `run_integration.py`    | Parse-only runner (alias for `python parse.py`)                       |
+| `run_integration.py`    | Parse-only runner (alias for `poetry run python parse.py`)                       |
 | `README.md`             | This file                                                             |
 | `QUICK_START.md`        | Minimal quick-start guide                                             |
 
