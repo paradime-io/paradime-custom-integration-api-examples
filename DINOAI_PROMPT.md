@@ -14,7 +14,7 @@ integrations for style reference and generate all files for you.
 Every integration follows a **two-layer architecture**:
 
 ```
-paradime_custom_integration_api/
+./
 ├── src/
 │   └── parsers/
 │       └── <your_tool>/          ← LAYER 1: pure parsing logic (library)
@@ -47,21 +47,21 @@ I want to add a new Paradime custom integration for [TOOL NAME] to this reposito
 Please read the following files for style reference BEFORE writing anything:
 
   Orchestration layer (template):
-  - paradime_custom_integration_api/integrations/_template/parse.py
-  - paradime_custom_integration_api/integrations/_template/upload_to_paradime.py
-  - paradime_custom_integration_api/integrations/_template/run_full_pipeline.py
+  - integrations/_template/parse.py
+  - integrations/_template/upload_to_paradime.py
+  - integrations/_template/run_full_pipeline.py
 
   Existing integration reference pair (orchestration + parser):
-  - paradime_custom_integration_api/integrations/matillion/parse.py
-  - paradime_custom_integration_api/src/parsers/matillion/parser.py
-  - paradime_custom_integration_api/src/parsers/matillion/__init__.py
+  - integrations/matillion/parse.py
+  - src/parsers/matillion/parser.py
+  - src/parsers/matillion/__init__.py
 
   Config examples:
-  - paradime_custom_integration_api/integrations/matillion/integration.json
-  - paradime_custom_integration_api/integrations/matillion/node_types.json
+  - integrations/matillion/integration.json
+  - integrations/matillion/node_types.json
 
   Architecture rules:
-  - paradime_custom_integration_api/CONTRIBUTING.md
+  - CONTRIBUTING.md
 
 ---
 
@@ -105,27 +105,27 @@ Write nodes to: target/[your_tool]_nodes.json
 
 ### Layer 1 — Parser library (src/)
 
-Create paradime_custom_integration_api/src/parsers/[your_tool]/parser.py:
+Create src/parsers/[your_tool]/parser.py:
   - Pure parsing functions only — no network calls, no sys.exit(), no file I/O beyond reading the input file
   - Implement `parse_source_file(file_path: Path) -> dict` with real parsing logic for [TOOL NAME] files
   - Include any helper functions (e.g. regex-based table extraction)
   - Full docstrings on every public function
 
-Create paradime_custom_integration_api/src/parsers/[your_tool]/__init__.py:
+Create src/parsers/[your_tool]/__init__.py:
   - Export the public functions from parser.py (e.g. `from .parser import parse_source_file`)
 
 ### Layer 2 — Orchestration (integrations/)
 
-Create paradime_custom_integration_api/integrations/[your_tool]/integration.json:
+Create integrations/[your_tool]/integration.json:
   - name: "[Tool Display Name]"
   - logo_url: "[publicly hosted SVG/PNG URL — use a real one or leave the placeholder]"
 
-Create paradime_custom_integration_api/integrations/[your_tool]/node_types.json:
+Create integrations/[your_tool]/node_types.json:
   - One entry per node type defined in section 3
   - Choose appropriate Feather icon names (from feathericons.com) and valid Paradime colours:
     LEAF, CYAN, CORAL, VIOLET, ORANGE, MANDY, TEAL, GREEN
 
-Create paradime_custom_integration_api/integrations/[your_tool]/parse.py:
+Create integrations/[your_tool]/parse.py:
   - Add sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent)) at the top
   - Import parse_source_file from src.parsers.[your_tool].parser
   - Copy `_find_repo_root()` and `download_repo()` verbatim from the _template — do NOT modify them
@@ -135,15 +135,15 @@ Create paradime_custom_integration_api/integrations/[your_tool]/parse.py:
   - Use `output_file = target_dir / "[your_tool]_nodes.json"` from section 6
   - Update the source_files glob to match the file extension from section 2
 
-Create paradime_custom_integration_api/integrations/[your_tool]/upload_to_paradime.py:
+Create integrations/[your_tool]/upload_to_paradime.py:
   - Copy from _template verbatim
   - Change only the ONE line: `nodes_file = ... / "[your_tool]_nodes.json"`
 
-Create paradime_custom_integration_api/integrations/[your_tool]/run_full_pipeline.py:
+Create integrations/[your_tool]/run_full_pipeline.py:
   - Copy from _template verbatim
   - Change only the display name in the print() statement
 
-Create paradime_custom_integration_api/integrations/[your_tool]/README.md:
+Create integrations/[your_tool]/README.md:
   - Follow the same structure as integrations/matillion/README.md
   - Replace all Matillion-specific content with [TOOL NAME] equivalents
   - Document every environment variable

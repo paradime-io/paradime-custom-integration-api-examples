@@ -183,8 +183,7 @@ Streamlit App      (upstream: nothing — App is the top-level container)
 
 1. **Copy the template folder:**
    ```bash
-   cp -r paradime_custom_integration_api/integrations/_template \
-         paradime_custom_integration_api/integrations/my_tool
+   cp -r integrations/_template integrations/my_tool
    ```
 
 2. **Fill in `integration.json`** — set `name` and `logo_url`.
@@ -208,7 +207,7 @@ Streamlit App      (upstream: nothing — App is the top-level container)
 
 8. **Test locally:**
    ```bash
-   cd paradime_custom_integration_api/integrations/my_tool
+   cd integrations/my_tool
    python parse.py          # check target/my_tool_nodes.json looks correct
    python run_full_pipeline.py
    ```
@@ -263,13 +262,13 @@ full instructions lives in **[DINOAI_PROMPT.md](DINOAI_PROMPT.md)**.
 I want to add a new Paradime custom integration for [TOOL NAME] to this repository.
 
 Please read the following files for style reference BEFORE writing anything:
-- paradime_custom_integration_api/integrations/_template/parse.py
-- paradime_custom_integration_api/integrations/_template/upload_to_paradime.py
-- paradime_custom_integration_api/integrations/_template/run_full_pipeline.py
-- paradime_custom_integration_api/integrations/matillion/parse.py
-- paradime_custom_integration_api/integrations/matillion/integration.json
-- paradime_custom_integration_api/integrations/matillion/node_types.json
-- paradime_custom_integration_api/CONTRIBUTING.md
+- integrations/_template/parse.py
+- integrations/_template/upload_to_paradime.py
+- integrations/_template/run_full_pipeline.py
+- integrations/matillion/parse.py
+- integrations/matillion/integration.json
+- integrations/matillion/node_types.json
+- CONTRIBUTING.md
 
 ---
 
@@ -311,7 +310,7 @@ Write nodes to: target/[your_tool]_nodes.json
 
 ## What I need you to build
 
-Create the following files under paradime_custom_integration_api/integrations/[your_tool]/:
+Create the following files under integrations/[your_tool]/:
 
 1. integration.json
    - name: "[Tool Display Name]"

@@ -118,7 +118,6 @@ Any path not found in the downloaded repo is **skipped with a warning** (the run
 
 1. Install dependencies:
    ```bash
-   cd paradime_custom_integration_api
    poetry install
    ```
 
@@ -140,19 +139,19 @@ Any path not found in the downloaded repo is **skipped with a warning** (the run
 
 ### Option 1: Full Pipeline (Parse + Upload) — Recommended
 ```bash
-cd paradime_custom_integration_api/integrations/streamlit
+cd integrations/streamlit
 python run_full_pipeline.py
 ```
 
 ### Option 2: Parse Only (generates `target/streamlit_nodes.json`)
 ```bash
-cd paradime_custom_integration_api/integrations/streamlit
+cd integrations/streamlit
 python parse.py
 ```
 
 ### Option 3: Upload Only (requires existing `target/streamlit_nodes.json`)
 ```bash
-cd paradime_custom_integration_api/integrations/streamlit
+cd integrations/streamlit
 python upload_to_paradime.py
 ```
 

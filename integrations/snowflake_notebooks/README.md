@@ -141,13 +141,21 @@ The `%%sql` magic header used by Snowflake Notebooks is automatically stripped b
 
 ### Prerequisites
 
-1. Install dependencies:
+1. Download the examples (run this in the **Paradime IDE terminal**):
    ```bash
-   cd paradime_custom_integration_api
+   curl -L https://github.com/paradime-io/paradime-custom-integration-api-examples/archive/refs/heads/main.zip \
+        -o paradime-custom-integration-api-examples.zip
+   unzip paradime-custom-integration-api-examples.zip && \
+        mv paradime-custom-integration-api-examples-main paradime-custom-integration-api-examples
+   cd paradime-custom-integration-api-examples
+   ```
+
+2. Install dependencies:
+   ```bash
    poetry install
    ```
 
-2. Set environment variables:
+3. Set environment variables:
    ```bash
    export GITHUB_TOKEN="ghp_your_token_here"          # for private repos
    export PARADIME_API_ENDPOINT="https://api.paradime.io"
@@ -155,7 +163,7 @@ The `%%sql` magic header used by Snowflake Notebooks is automatically stripped b
    export PARADIME_API_SECRET="your_api_secret"
    ```
 
-3. *(Optional)* Configure the target repo, branch, and filter:
+4. *(Optional)* Configure the target repo, branch, and filter:
    ```bash
    export SNOW_NOTEBOOK_REPO_URL="https://github.com/your-org/your-notebook-repo"
    export SNOW_NOTEBOOK_BRANCH="main"
@@ -164,19 +172,19 @@ The `%%sql` magic header used by Snowflake Notebooks is automatically stripped b
 
 ### Option 1: Full Pipeline (Parse + Upload) — Recommended
 ```bash
-cd paradime_custom_integration_api/integrations/snowflake_notebooks
+cd integrations/snowflake_notebooks
 python run_full_pipeline.py
 ```
 
 ### Option 2: Parse Only (generates `target/snowflake_notebooks_nodes.json`)
 ```bash
-cd paradime_custom_integration_api/integrations/snowflake_notebooks
+cd integrations/snowflake_notebooks
 python parse.py
 ```
 
 ### Option 3: Upload Only (requires existing `target/snowflake_notebooks_nodes.json`)
 ```bash
-cd paradime_custom_integration_api/integrations/snowflake_notebooks
+cd integrations/snowflake_notebooks
 python upload_to_paradime.py
 ```
 

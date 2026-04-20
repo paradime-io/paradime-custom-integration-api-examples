@@ -103,7 +103,6 @@ unset [YOUR_ENV_PREFIX]_FILE_FILTER
 
 1. Install dependencies:
    ```bash
-   cd paradime_custom_integration_api
    poetry install
    ```
 
@@ -124,19 +123,19 @@ unset [YOUR_ENV_PREFIX]_FILE_FILTER
 
 ### Option 1: Full Pipeline (Parse + Upload) — Recommended
 ```bash
-cd paradime_custom_integration_api/integrations/[your_tool]
+cd integrations/[your_tool]
 python run_full_pipeline.py
 ```
 
 ### Option 2: Parse Only (generates `target/[your_tool]_nodes.json`)
 ```bash
-cd paradime_custom_integration_api/integrations/[your_tool]
+cd integrations/[your_tool]
 python parse.py
 ```
 
 ### Option 3: Upload Only (requires existing `target/[your_tool]_nodes.json`)
 ```bash
-cd paradime_custom_integration_api/integrations/[your_tool]
+cd integrations/[your_tool]
 python upload_to_paradime.py
 ```
 

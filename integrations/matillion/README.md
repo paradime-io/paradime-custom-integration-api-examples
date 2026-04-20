@@ -105,7 +105,6 @@ If a path in the filter doesn't exist in the repo, it is skipped with a warning.
 
 1. Install dependencies:
    ```bash
-   cd paradime_custom_integration_api
    poetry install
    ```
 
@@ -126,19 +125,19 @@ If a path in the filter doesn't exist in the repo, it is skipped with a warning.
 
 ### Option 1: Full Pipeline (Parse + Upload) — Recommended
 ```bash
-cd paradime_custom_integration_api/integrations/matillion
+cd integrations/matillion
 python run_full_pipeline.py
 ```
 
 ### Option 2: Parse Only (generates `target/matillion_nodes.json`)
 ```bash
-cd paradime_custom_integration_api/integrations/matillion
+cd integrations/matillion
 python parse.py
 ```
 
 ### Option 3: Upload Only (requires existing `target/matillion_nodes.json`)
 ```bash
-cd paradime_custom_integration_api/integrations/matillion
+cd integrations/matillion
 python upload_to_paradime.py
 ```
 
