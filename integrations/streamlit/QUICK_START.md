@@ -31,7 +31,7 @@ export PARADIME_API_SECRET="your_api_secret"
 ### Step 4: Run the Full Pipeline
 ```bash
 cd integrations/streamlit
-python run_full_pipeline.py
+poetry run python run_full_pipeline.py
 ```
 
 That's it! Your Streamlit integration is now live in Paradime. 🎉
@@ -136,12 +136,12 @@ target/                       # repo root — gitignored
 
 **Parse only** (generates `target/streamlit_nodes.json`, no upload):
 ```bash
-python parse.py
+poetry run python parse.py
 ```
 
 **Upload only** (requires existing `target/streamlit_nodes.json`):
 ```bash
-python upload_to_paradime.py
+poetry run python upload_to_paradime.py
 ```
 
 See [README.md](README.md) for full documentation.

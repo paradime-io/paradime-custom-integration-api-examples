@@ -233,7 +233,7 @@ export PARADIME_API_SECRET="your_secret"
 
 # 3. Run an integration
 cd integrations/matillion
-python run_full_pipeline.py
+poetry run python run_full_pipeline.py
 ```
 
 See each integration's `README.md` and `QUICK_START.md` for full details.

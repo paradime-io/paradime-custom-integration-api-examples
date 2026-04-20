@@ -208,8 +208,8 @@ Streamlit App      (upstream: nothing — App is the top-level container)
 8. **Test locally:**
    ```bash
    cd integrations/my_tool
-   python parse.py          # check target/my_tool_nodes.json looks correct
-   python run_full_pipeline.py
+   poetry run python parse.py          # check target/my_tool_nodes.json looks correct
+   poetry run python run_full_pipeline.py
    ```
 
 9. **Open a PR.**
@@ -359,6 +359,6 @@ TODOs that still need manual input (e.g. a real logo URL, testing against a live
 - [ ] `upload_to_paradime.py` references the correct nodes filename
 - [ ] `temp_repo/` is cleaned up by the `finally` block in `parse.py`
 - [ ] The integration folder name is added to `.gitignore` temp_repo entries if needed
-- [ ] `python parse.py` runs without errors and produces a valid JSON file
-- [ ] `python run_full_pipeline.py` runs end-to-end successfully
+- [ ] `poetry run python parse.py` runs without errors and produces a valid JSON file
+- [ ] `poetry run python run_full_pipeline.py` runs end-to-end successfully
 - [ ] `README.md` documents all environment variables, node types, and usage options
