@@ -200,4 +200,10 @@ export PARADIME_API_SECRET="your_secret"
 ```
 
 ### SQL queries with template variables
-Queries containing Python f-string variables (e.g. `WHERE year = {year}`) may not parse fully. This is a known limitation of static SQL extraction.
+Queries containing Python f-string variables (e.g. `WHERE year = {year}`) may not extract table names fully — placeholders are replaced with a dummy value before parsing. The query is still recorded; only table extraction may be incomplete.
+
+### A file could not be parsed
+If a Streamlit app file fails entirely (e.g. uses non-standard imports or unsupported syntax), it is skipped and its path is written to `target/streamlit_parse_failures.txt`. Check that file after a run to identify any apps that need manual review.
+
+### Some charts show no tables
+Complex or dynamically-built SQL (string concatenation, multi-line f-strings) may not be captured by static analysis. This is a known limitation — the chart node is still created, just without upstream lineage.
