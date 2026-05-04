@@ -32,9 +32,12 @@ class SQLTableTracker:
 
     def _create_schema(self):
         """Create the DuckDB schema for storing table usage."""
+        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_table_usage START 1")
+        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_app_metadata START 1")
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS table_usage (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY DEFAULT nextval('seq_table_usage'),
                 file_path VARCHAR,
                 chart_type VARCHAR,
                 chart_name VARCHAR,
@@ -45,10 +48,10 @@ class SQLTableTracker:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS app_metadata (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY DEFAULT nextval('seq_app_metadata'),
                 file_path VARCHAR,
                 app_title VARCHAR,
                 app_description TEXT,
@@ -337,15 +340,17 @@ class SQLTableTracker:
         
         # Store app metadata
         if app_title or app_description:
-            self.conn.execute("""
-                INSERT INTO app_metadata (id, file_path, app_title, app_description)
-                VALUES (?, ?, ?, ?)
-            """, (
-                1,
-                str(file_path),
-                app_title,
-                app_description
-            ))
+            try:
+                self.conn.execute("""
+                    INSERT INTO app_metadata (file_path, app_title, app_description)
+                    VALUES (?, ?, ?)
+                """, (
+                    str(file_path),
+                    app_title,
+                    app_description,
+                ))
+            except Exception as e:
+                print(f"Warning: could not store app metadata for {file_path}: {e}")
             print(f"App Metadata:")
             print(f"  Title: {app_title or 'Not found'}")
             print(f"  Description: {app_description[:100] if app_description else 'Not found'}...")
@@ -365,26 +370,37 @@ class SQLTableTracker:
                 continue
             
             # Extract tables
-            tables = self.extract_tables_from_sql(sql)
-            
+            try:
+                tables = self.extract_tables_from_sql(sql)
+            except Exception as e:
+                print(f"  Warning: could not extract tables from query at line {line_number}: {e}")
+                tables = set()
+
             # Infer chart information
-            chart_type, chart_name, chart_caption = self.infer_chart_info(file_content, line_number or 0)
-            
+            try:
+                chart_type, chart_name, chart_caption = self.infer_chart_info(file_content, line_number or 0)
+            except Exception as e:
+                print(f"  Warning: could not infer chart info at line {line_number}: {e}")
+                chart_type, chart_name, chart_caption = "unknown", None, None
+
             # Store in database
-            self.conn.execute("""
-                INSERT INTO table_usage (id, file_path, chart_type, chart_name, chart_caption, line_number, sql_query, tables_used)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                idx + 1,
-                str(file_path),
-                chart_type,
-                chart_name,
-                chart_caption,
-                line_number,
-                sql,
-                list(tables)
-            ))
-            
+            try:
+                self.conn.execute("""
+                    INSERT INTO table_usage (file_path, chart_type, chart_name, chart_caption, line_number, sql_query, tables_used)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(file_path),
+                    chart_type,
+                    chart_name,
+                    chart_caption,
+                    line_number,
+                    sql,
+                    list(tables),
+                ))
+            except Exception as e:
+                print(f"  Warning: could not store query at line {line_number}: {e}")
+                continue
+
             print(f"  [{idx+1}] {chart_type}: {chart_name or 'Unnamed'}")
             print(f"      Caption: {chart_caption or 'None'}")
             print(f"      Tables: {', '.join(tables) or 'None'}")
