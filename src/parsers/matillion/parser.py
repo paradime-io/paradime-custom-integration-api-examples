@@ -184,6 +184,23 @@ def parse_matillion_yaml(file_path: Path) -> dict[str, Any]:
     else:
         pipeline_type = "unknown"
 
+    # Warn about non-utility components that weren't classified — likely new
+    # connector types that don't yet match the -input- / -output naming pattern
+    unclassified = [
+        c for c in components
+        if c["role"] == "utility" and c["type"] not in {
+            "start", "end-failure", "end-success", "or", "and",
+            "retry", "query-to-scalar", "sql-executor", "python-script",
+            "iterator", "fixed-flow-iterator",
+        }
+    ]
+    for c in unclassified:
+        logger.warning(
+            f"  Unclassified component '{c['name']}' in {file_path.name} "
+            f"(type='{c['type']}') — not recognised as ingestion or reverse ETL. "
+            "Update _component_role() if this is a data-movement component."
+        )
+
     logger.info(
         f"Parsed pipeline '{pipeline_name}' | type={pipeline_type} "
         f"| {len(components)} component(s)"

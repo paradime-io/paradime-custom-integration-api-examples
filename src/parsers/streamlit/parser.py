@@ -73,7 +73,14 @@ class SQLTableTracker:
             content = f.read()
 
         sql_queries = []
-        
+        seen_sql: Set[str] = set()
+
+        def _add(sql_text: str, line_number: int | None) -> None:
+            key = sql_text.strip()
+            if key and key not in seen_sql and self._looks_like_sql(key):
+                seen_sql.add(key)
+                sql_queries.append({'sql': key, 'line_number': line_number})
+
         # Parse the Python AST
         try:
             tree = ast.parse(content)
@@ -84,76 +91,53 @@ class SQLTableTracker:
         # Find all string literals that look like SQL
         for node in ast.walk(tree):
             if isinstance(node, ast.Str):
-                sql_text = node.s
-                if self._looks_like_sql(sql_text):
-                    sql_queries.append({
-                        'sql': sql_text,
-                        'line_number': node.lineno if hasattr(node, 'lineno') else None
-                    })
+                _add(node.s, node.lineno if hasattr(node, 'lineno') else None)
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-                sql_text = node.value
-                if self._looks_like_sql(sql_text):
-                    sql_queries.append({
-                        'sql': sql_text,
-                        'line_number': node.lineno if hasattr(node, 'lineno') else None
-                    })
+                _add(node.value, node.lineno if hasattr(node, 'lineno') else None)
 
-        # Also use regex as backup to catch f-strings and other patterns
+        # Regex fallback to catch f-strings and session.sql() patterns
         sql_pattern = r'session\.sql\s*\(\s*[f]?["\']+(.*?)["\']+'
         for match in re.finditer(sql_pattern, content, re.DOTALL | re.IGNORECASE):
-            sql_text = match.group(1)
             line_number = content[:match.start()].count('\n') + 1
-            
-            # Clean up the SQL text
-            sql_text = sql_text.strip()
-            
-            if sql_text and self._looks_like_sql(sql_text):
-                sql_queries.append({
-                    'sql': sql_text,
-                    'line_number': line_number
-                })
+            _add(match.group(1), line_number)
 
         return sql_queries
 
     def _looks_like_sql(self, text: str) -> bool:
         """
         Check if a string looks like SQL.
-        
+
         Args:
             text: String to check
-            
+
         Returns:
             True if the string looks like SQL
         """
-        # Must have reasonable length
         if len(text.strip()) < 15:
             return False
-            
+
         text_upper = text.upper().strip()
-        
-        # Must start with SELECT (most common for analytics)
-        if not text_upper.startswith('SELECT'):
+
+        # Accept plain SELECT queries and CTEs (WITH ... AS ( SELECT ...))
+        is_select = text_upper.startswith('SELECT')
+        is_cte = text_upper.startswith('WITH') and 'SELECT' in text_upper
+        if not (is_select or is_cte):
             return False
-        
-        # Must contain FROM keyword
+
         if 'FROM' not in text_upper:
             return False
-        
-        # Should not look like natural language
-        # Check for common English sentence patterns
+
         english_indicators = [
             'THE ', 'A ', 'AN ', 'IS ', 'ARE ', 'WAS ', 'WERE ',
             'THIS ', 'THAT ', 'THESE ', 'THOSE ', 'WILL ', 'CAN '
         ]
-        
-        # Count how many English indicators are at word boundaries
-        english_count = sum(1 for indicator in english_indicators 
-                           if f' {indicator}' in f' {text_upper}' or text_upper.startswith(indicator))
-        
-        # If it has too many English words, it's probably not SQL
+        english_count = sum(
+            1 for indicator in english_indicators
+            if f' {indicator}' in f' {text_upper}' or text_upper.startswith(indicator)
+        )
         if english_count > 2:
             return False
-            
+
         return True
 
     def extract_tables_from_sql(self, sql: str, dialect: str = "snowflake") -> Set[str]:
