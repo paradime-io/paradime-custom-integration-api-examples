@@ -459,9 +459,11 @@ def extract_and_save_nodes(
         failed_log = target_dir / "matillion_parse_failures.txt"
         failed_log.write_text("\n".join(failed_files) + "\n", encoding="utf-8")
         logger.warning(
-            f"{len(failed_files)} file(s) could not be parsed — "
-            f"see {failed_log} for details"
+            f"{len(failed_files)} file(s) could not be parsed and were skipped:"
         )
+        for path in failed_files:
+            logger.warning(f"  - {path}")
+        logger.warning(f"Full list written to {failed_log}")
 
 
 if __name__ == "__main__":
