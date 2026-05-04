@@ -485,6 +485,7 @@ def extract_and_save_nodes(
     # Step 3 & 4: Parse each file and accumulate nodes.
     # try/finally guarantees temp_repo is removed even if parsing fails.
     all_nodes: list[dict[str, Any]] = []
+    failed_files: list[str] = []
     try:
         for app_file in app_files:
             relative_path = str(app_file.relative_to(temp_dir))
@@ -496,27 +497,33 @@ def extract_and_save_nodes(
                 else f"{app_name} – {app_file.stem}"
             )
 
-            parse_streamlit_app(app_file, db_path)
-            parsed_data, app_metadata = read_parsed_data(db_path)
+            try:
+                parse_streamlit_app(app_file, db_path)
+                parsed_data, app_metadata = read_parsed_data(db_path)
 
-            logger.info(
-                f"  '{relative_path}' → {len(parsed_data)} SQL queries found"
-            )
-            if app_metadata:
-                logger.info(f"    App Title: {app_metadata.get('app_title')}")
+                logger.info(
+                    f"  '{relative_path}' → {len(parsed_data)} SQL queries found"
+                )
+                if app_metadata:
+                    logger.info(f"    App Title: {app_metadata.get('app_title')}")
 
-            app_url = f"{repo_url}/blob/{branch}/{relative_path}"
-            nodes = convert_to_paradime_nodes(
-                parsed_data=parsed_data,
-                app_metadata=app_metadata,
-                app_name=file_app_name,
-                app_url=app_url,
-            )
-            logger.info(
-                f"  '{app_file.name}' → {len(nodes)} node(s) "
-                f"(1 app + {len(nodes) - 1} chart(s))"
-            )
-            all_nodes.extend(nodes)
+                app_url = f"{repo_url}/blob/{branch}/{relative_path}"
+                nodes = convert_to_paradime_nodes(
+                    parsed_data=parsed_data,
+                    app_metadata=app_metadata,
+                    app_name=file_app_name,
+                    app_url=app_url,
+                )
+                logger.info(
+                    f"  '{app_file.name}' → {len(nodes)} node(s) "
+                    f"(1 app + {len(nodes) - 1} chart(s))"
+                )
+                all_nodes.extend(nodes)
+            except Exception as exc:
+                logger.error(
+                    f"  Failed to parse '{app_file.name}' — skipping. Error: {exc}"
+                )
+                failed_files.append(relative_path)
 
             # Remove the per-file DuckDB database before processing the next file
             if db_path.exists():
@@ -530,6 +537,17 @@ def extract_and_save_nodes(
     # Step 5: Write streamlit_nodes.json into target/
     output_file.write_text(json.dumps(all_nodes, indent=2), encoding="utf-8")
     logger.info(f"Saved {len(all_nodes)} total nodes to {output_file}")
+
+    # Step 6: Write failed files log (only if there were failures)
+    if failed_files:
+        failed_log = target_dir / "streamlit_parse_failures.txt"
+        failed_log.write_text("\n".join(failed_files) + "\n", encoding="utf-8")
+        logger.warning(
+            f"{len(failed_files)} file(s) could not be parsed and were skipped:"
+        )
+        for path in failed_files:
+            logger.warning(f"  - {path}")
+        logger.warning(f"Full list written to {failed_log}")
 
 
 if __name__ == "__main__":
