@@ -160,7 +160,14 @@ def parse_matillion_yaml(file_path: Path) -> dict[str, Any]:
 
     components: list[dict[str, Any]] = []
     for comp_name, comp_def in components_block.items():
-        parsed = _parse_component(comp_name, comp_def)
+        try:
+            parsed = _parse_component(comp_name, comp_def)
+        except Exception as exc:
+            logger.warning(
+                f"  Skipping component '{comp_name}' in {file_path.name} — "
+                f"parse error: {exc}"
+            )
+            continue
         components.append(parsed)
         logger.debug(
             f"  Component '{comp_name}' | type={parsed['type']} "

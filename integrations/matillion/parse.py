@@ -419,18 +419,27 @@ def extract_and_save_nodes(
     # Step 3 & 4: Parse each file and accumulate nodes.
     # The try/finally guarantees temp_repo is removed even if parsing fails.
     all_nodes: list[dict[str, Any]] = []
+    failed_files: list[str] = []
     try:
         for orch_file in orch_files:
             # Relative path inside the repo (for building GitHub source links)
             relative_path = str(orch_file.relative_to(temp_dir))
 
-            parsed = parse_matillion_yaml(orch_file)
-            nodes = convert_to_paradime_nodes(
-                parsed_pipeline=parsed,
-                repo_url=repo_url,
-                yaml_file_path=relative_path,
-                branch=branch,
-            )
+            try:
+                parsed = parse_matillion_yaml(orch_file)
+                nodes = convert_to_paradime_nodes(
+                    parsed_pipeline=parsed,
+                    repo_url=repo_url,
+                    yaml_file_path=relative_path,
+                    branch=branch,
+                )
+            except Exception as exc:
+                logger.error(
+                    f"  Failed to parse '{orch_file.name}' — skipping. Error: {exc}"
+                )
+                failed_files.append(relative_path)
+                continue
+
             logger.info(
                 f"  '{orch_file.name}' → {len(nodes)} node(s) "
                 f"(1 pipeline + {len(nodes) - 1} job(s))"
@@ -444,6 +453,15 @@ def extract_and_save_nodes(
     # Step 5: Write nodes.json
     output_file.write_text(json.dumps(all_nodes, indent=2), encoding="utf-8")
     logger.info(f"Saved {len(all_nodes)} total nodes to {output_file}")
+
+    # Step 6: Write failed files log (only if there were failures)
+    if failed_files:
+        failed_log = target_dir / "matillion_parse_failures.txt"
+        failed_log.write_text("\n".join(failed_files) + "\n", encoding="utf-8")
+        logger.warning(
+            f"{len(failed_files)} file(s) could not be parsed — "
+            f"see {failed_log} for details"
+        )
 
 
 if __name__ == "__main__":
