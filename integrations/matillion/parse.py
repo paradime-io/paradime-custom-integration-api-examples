@@ -219,6 +219,7 @@ def convert_to_paradime_nodes(
     nodes: list[dict[str, Any]] = []
 
     pipeline_name: str = parsed_pipeline["pipeline_name"]
+    pipeline_type: str = parsed_pipeline.get("pipeline_type", "unknown")
     description: str = parsed_pipeline["description"]
     components: list[dict[str, Any]] = parsed_pipeline["components"]
 
@@ -238,8 +239,13 @@ def convert_to_paradime_nodes(
         if c["type"] != "start" and c["skipped"]
     ]
 
+    type_label = {
+        "ingestion": "ingestion (SaaS → Snowflake)",
+        "reverse_etl": "reverse ETL (Snowflake → destination)",
+    }.get(pipeline_type, "orchestration")
+
     pipeline_description = description or (
-        f"Matillion orchestration pipeline with {len(active_jobs)} active job(s)"
+        f"Matillion {type_label} pipeline with {len(active_jobs)} active job(s)"
         + (f" and {len(skipped_jobs)} skipped job(s)" if skipped_jobs else "")
         + "."
     )
@@ -267,18 +273,18 @@ def convert_to_paradime_nodes(
 
         comp_name: str = component["name"]
         output_table: str | None = component["output_table"]
+        source_table: str | None = component["source_table"]
         endpoint: str | None = component["endpoint"]
         skipped: bool = component["skipped"]
 
         # Build a readable description
-        # Action parts (endpoint + table) are joined with "and".
-        # The skipped flag is appended separately so it reads as a status,
-        # not as a third action in the chain.
         action_parts = []
         if endpoint:
             action_parts.append(f"Calls the **{endpoint}** API endpoint")
-        if output_table:
+        if pipeline_type == "ingestion" and output_table:
             action_parts.append(f"writes results to Snowflake table `{output_table}`")
+        elif pipeline_type == "reverse_etl" and source_table:
+            action_parts.append(f"reads from Snowflake table/view `{source_table}`")
 
         if action_parts:
             job_description = " and ".join(action_parts)
@@ -290,8 +296,7 @@ def convert_to_paradime_nodes(
             if skipped:
                 job_description += " *(currently skipped)*"
 
-        # The Job's upstream dependencies come from the Pipeline node itself
-        # (the pipeline orchestrates this job)
+        # Upstream always includes the parent Pipeline node
         job_upstream: list[dict[str, Any]] = [
             {
                 "integration_name": "Matillion",
@@ -300,14 +305,23 @@ def convert_to_paradime_nodes(
             }
         ]
 
-        # The Job's downstream dependency is the Snowflake table it writes to.
-        # This table name matches the dbt source table, creating lineage:
-        #   Matillion Job → Snowflake table ← dbt source → dbt models
         job_downstream: list[dict[str, Any]] = []
-        if output_table:
-            job_downstream.append(
-                {"table_name": _table_name_to_dbt_model(output_table)}
-            )
+
+        if pipeline_type == "ingestion":
+            # Ingestion: Job writes to a Snowflake landing table
+            # Lineage: Matillion Job → Snowflake table ← dbt source
+            if output_table:
+                job_downstream.append(
+                    {"table_name": _table_name_to_dbt_model(output_table)}
+                )
+
+        elif pipeline_type == "reverse_etl":
+            # Reverse ETL: Job reads from a dbt model/view and pushes to destination
+            # Lineage: dbt model → Matillion Job
+            if source_table:
+                job_upstream.append(
+                    {"table_name": _table_name_to_dbt_model(source_table)}
+                )
 
         job_node: dict[str, Any] = {
             "name": f"{pipeline_name}.{comp_name}",
