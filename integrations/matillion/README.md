@@ -8,9 +8,11 @@ This integration parses Matillion orchestration pipelines (`.orch.yaml` files) f
 
 - 📥 **Automatic Repo Download**: Downloads Matillion pipeline repos via ZIP (no Git required)
 - 🔍 **YAML Parsing**: Extracts pipeline metadata and all component definitions
-- 🔗 **Lineage Tracking**: Links Matillion load jobs to the Snowflake tables they write — which are consumed by dbt sources
+- 🔄 **Pipeline Type Detection**: Automatically classifies each pipeline as **ingestion** (SaaS → Snowflake) or **reverse ETL** (Snowflake → destination)
+- 🔗 **Lineage Tracking**: Ingestion jobs link downstream to dbt source tables; reverse ETL jobs link upstream from dbt models/views
 - ⏭️ **Skipped Component Awareness**: Correctly flags components marked `skipped: true`
 - 🎯 **Pipeline Filtering**: Process all pipelines or target specific ones via env var
+- 🛡️ **Resilient Parsing**: Failed files are skipped with a warning and logged to `target/matillion_parse_failures.txt` — the run never stops mid-batch
 - 📝 **Paradime SDK Format**: Outputs nodes ready for the Paradime custom integration API
 
 ---
@@ -39,16 +41,32 @@ Represents a single non-Start component in the pipeline.
 
 ## Lineage Model
 
+### Ingestion pipelines (SaaS → Snowflake)
+
+Components with `*-input-*` types (e.g. `modular-salesforce-input-v1`) pull data from a SaaS source and land it in a Snowflake table. The lineage connects Matillion jobs downstream to the dbt source tables that consume those landing tables.
+
 ```
 Matillion Pipeline  (orchestrates)
     ↓
-Matillion Job       (writes to Snowflake table)
+Matillion Job       (writes to Snowflake landing table)
     ↓
-Snowflake Table     (e.g. F1_DRIVERS_CC)
+Snowflake Table     (e.g. CASE_LND)
     ↓
-dbt Source Model    (references the same table)
+dbt Source          (references the landing table)
     ↓
 dbt Staging / Mart Models
+```
+
+### Reverse ETL pipelines (Snowflake → destination)
+
+Components with `*-output` types (e.g. `salesforce-output`) read from a Snowflake view or table produced by dbt and push data to an external destination. The lineage connects dbt models upstream into the Matillion job.
+
+```
+dbt Model / View    (e.g. SFDC_ACCOUNT360_CUSTOMER_SCORECARD_VW)
+    ↓
+Matillion Job       (reads from Snowflake, writes to destination)
+    ↓
+External Destination (e.g. Salesforce object)
 ```
 
 ---
@@ -162,15 +180,25 @@ poetry run python upload_to_paradime.py
 
 ## Supported Component Types
 
-The parser handles Matillion components of type `modular-api-extract-input-v2`.
-It extracts:
+The parser classifies components into three roles based on their Matillion type string:
 
-| YAML Field                                           | Maps To              |
-|------------------------------------------------------|----------------------|
-| `parameters.api-extract-input-v2.endpoint`           | Job description      |
-| `parameters.snowflake-output-connector-v0.tableName` | Downstream table     |
-| `skipped`                                            | Metadata flag        |
-| `transitions`                                        | (used for ordering)  |
+| Role               | Type pattern       | Example                          | Effect                                      |
+|--------------------|--------------------|----------------------------------|---------------------------------------------|
+| `ingestion_input`  | contains `-input-` | `modular-salesforce-input-v1`    | `output_table` → downstream dbt source      |
+| `reverse_etl_output` | ends with `-output` | `salesforce-output`            | `sourceTable` → upstream dbt model          |
+| `utility`          | everything else    | `python-script`, `sql-executor`  | No lineage wiring                           |
+
+Fields extracted per component:
+
+| YAML Field                                           | Maps To                          |
+|------------------------------------------------------|----------------------------------|
+| `parameters.snowflake-output-connector-v0.tableName` | `output_table` (ingestion)       |
+| `parameters.sourceTable`                             | `source_table` (reverse ETL)     |
+| `parameters.api-extract-input-v2.endpoint`           | Job description                  |
+| `skipped`                                            | Metadata flag                    |
+| `transitions`                                        | (used for ordering)              |
+
+If a component type is not recognised as ingestion, reverse ETL, or a known utility type, the parser logs a warning so you can extend `_component_role()` in `src/parsers/matillion/parser.py`.
 
 ---
 

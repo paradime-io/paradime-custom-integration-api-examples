@@ -7,10 +7,11 @@ This integration parses Streamlit applications to extract SQL queries and create
 ## Features
 
 - 📥 **Automatic Repo Download**: Downloads Streamlit repos via ZIP (no Git required)
-- 🔍 **SQL Parsing**: Extracts SQL queries from Streamlit Python files
+- 🔍 **SQL Parsing**: Extracts SQL queries from Streamlit Python files, including CTEs (`WITH ... AS (SELECT ...)`)
 - 📊 **Chart Detection**: Identifies bar charts, line charts, dataframes, etc.
 - 🔗 **Lineage Tracking**: Links Streamlit charts to upstream dbt models
 - 🎯 **File Filtering**: Process one or more specific app files — or use the built-in default
+- 🛡️ **Resilient Parsing**: Individual queries that fail are skipped with a warning; files that cannot be parsed are logged to `target/streamlit_parse_failures.txt` and the run continues
 - 📝 **Paradime SDK Format**: Outputs nodes in Paradime custom integration format
 
 ---
