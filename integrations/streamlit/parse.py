@@ -21,8 +21,10 @@ Lineage
 
 Usage:
     python parse.py
+    python parse.py /path/to/local/streamlit_app.py
 
 Environment Variables:
+    STREAMLIT_LOCAL_FILE    Absolute path to a local .py file to parse (skips GitHub download)
     STREAMLIT_REPO_URL      GitHub repo URL (default: paradime-sandbox/streamlit-f1-analysis)
     STREAMLIT_BRANCH        Branch to download (default: main)
     STREAMLIT_APP_NAME      Display name for the Streamlit app node
@@ -85,6 +87,11 @@ FILE_FILTER: list[str] | None = (
     if _raw_filter
     else None
 )
+
+# Local file mode: skip GitHub download entirely.
+# Set via env var or pass as the first CLI argument.
+_local_file_arg = sys.argv[1] if len(sys.argv) > 1 else None
+LOCAL_FILE: str | None = os.getenv("STREAMLIT_LOCAL_FILE") or _local_file_arg
 
 
 # ---------------------------------------------------------------------------
@@ -551,17 +558,49 @@ def extract_and_save_nodes(
 
 
 if __name__ == "__main__":
-    GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-    if not GITHUB_TOKEN:
-        logger.warning(
-            "GITHUB_TOKEN not set – attempting anonymous download. "
-            "This will fail for private repositories."
-        )
+    if LOCAL_FILE:
+        local_path = Path(LOCAL_FILE)
+        if not local_path.exists():
+            logger.error(f"Local file not found: {local_path}")
+            sys.exit(1)
 
-    extract_and_save_nodes(
-        repo_url=REPO_URL,
-        branch=BRANCH,
-        app_name=APP_NAME,
-        github_token=GITHUB_TOKEN,
-        file_filter=FILE_FILTER,
-    )
+        logger.info(f"Local file mode — parsing: {local_path}")
+
+        script_dir = Path(__file__).resolve().parent
+        db_path = script_dir / "streamlit_analysis.duckdb"
+        repo_root = _find_repo_root(script_dir)
+        target_dir = repo_root / "target"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_file = target_dir / "streamlit_nodes.json"
+
+        parse_streamlit_app(local_path, db_path)
+        parsed_data, app_metadata = read_parsed_data(db_path)
+        if db_path.exists():
+            db_path.unlink()
+
+        logger.info(f"Found {len(parsed_data)} SQL queries")
+        nodes = convert_to_paradime_nodes(
+            parsed_data=parsed_data,
+            app_metadata=app_metadata,
+            app_name=APP_NAME,
+            app_url=str(local_path),
+        )
+        logger.info(f"Generated {len(nodes)} node(s) (1 app + {len(nodes) - 1} chart(s))")
+
+        output_file.write_text(json.dumps(nodes, indent=2), encoding="utf-8")
+        logger.info(f"Saved to {output_file}")
+    else:
+        GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+        if not GITHUB_TOKEN:
+            logger.warning(
+                "GITHUB_TOKEN not set – attempting anonymous download. "
+                "This will fail for private repositories."
+            )
+
+        extract_and_save_nodes(
+            repo_url=REPO_URL,
+            branch=BRANCH,
+            app_name=APP_NAME,
+            github_token=GITHUB_TOKEN,
+            file_filter=FILE_FILTER,
+        )

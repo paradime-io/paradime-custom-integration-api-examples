@@ -7,6 +7,7 @@ This integration parses **Snowflake Notebook** files (`.ipynb`) from a GitHub re
 ## Features
 
 - 📥 **Automatic Repo Download**: Downloads notebook repos via ZIP archive (no Git required)
+- 📂 **Local File Mode**: Parse a local `.ipynb` file directly — no GitHub download needed
 - 🔍 **Notebook Parsing**: Extracts cell metadata, titles, languages, and SQL table references from `.ipynb` files
 - 🔗 **Lineage Tracking**: Links SQL cells back to the Snowflake tables they query — which are written by dbt models — creating end-to-end lineage from dbt → Snowflake table → Notebook cell
 - 🎯 **Notebook Filtering**: Process all notebooks or target specific ones via env var
@@ -74,6 +75,7 @@ All configuration is done via **environment variables** — no editing of `parse
 
 | Variable                      | Required | Default                                                                  | Description                                                                                                 |
 |-------------------------------|----------|--------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|
+| `SNOW_NOTEBOOK_LOCAL_FILE`    | No       | —                                                                        | Absolute path to a local `.ipynb` file. When set (or passed as a CLI arg), skips the GitHub download entirely |
 | `SNOW_NOTEBOOK_REPO_URL`      | No       | `https://github.com/paradime-sandbox/paradime-dino-agent-snowflake`      | URL of the GitHub repo containing `.ipynb` notebook files                                                   |
 | `SNOW_NOTEBOOK_BRANCH`        | No       | `dev-fdl-snow-workbook`                                                  | Git branch to download                                                                                      |
 | `SNOW_NOTEBOOK_FILE_FILTER`   | No       | *(empty — process all)*                                                  | Comma-separated list of repo-relative `.ipynb` paths to process. Leave unset to process **all** notebooks   |
@@ -182,7 +184,18 @@ cd integrations/snowflake_notebooks
 poetry run python parse.py
 ```
 
-### Option 3: Upload Only (requires existing `target/snowflake_notebooks_nodes.json`)
+### Option 3: Parse a Local File (no GitHub download)
+Pass the file path as a CLI argument or env var — useful for testing before committing to a repo:
+```bash
+# As a CLI argument
+poetry run python integrations/snowflake_notebooks/parse.py /path/to/your/notebook.ipynb
+
+# As an environment variable
+export SNOW_NOTEBOOK_LOCAL_FILE="/path/to/your/notebook.ipynb"
+poetry run python integrations/snowflake_notebooks/parse.py
+```
+
+### Option 4: Upload Only (requires existing `target/snowflake_notebooks_nodes.json`)
 ```bash
 cd integrations/snowflake_notebooks
 poetry run python upload_to_paradime.py
