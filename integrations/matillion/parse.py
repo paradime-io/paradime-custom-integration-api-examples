@@ -20,8 +20,10 @@ Lineage
 
 Usage:
     python parse.py
+    python parse.py /path/to/local/pipeline.orch.yaml
 
 Environment Variables:
+    MATILLION_LOCAL_FILE    Absolute path to a local .orch.yaml file to parse (skips GitHub download)
     GITHUB_TOKEN            GitHub Personal Access Token (needed for private repos)
 """
 
@@ -108,6 +110,11 @@ PIPELINE_FILTER: list[str] | None = (
     if _raw_filter
     else None
 )
+
+# Local file mode: skip GitHub download entirely.
+# Set via env var or pass as the first CLI argument.
+_local_file_arg = sys.argv[1] if len(sys.argv) > 1 else None
+LOCAL_FILE: str | None = os.getenv("MATILLION_LOCAL_FILE") or _local_file_arg
 
 
 # ---------------------------------------------------------------------------
@@ -467,16 +474,42 @@ def extract_and_save_nodes(
 
 
 if __name__ == "__main__":
-    GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-    if not GITHUB_TOKEN:
-        logger.warning(
-            "GITHUB_TOKEN not set – attempting anonymous download. "
-            "This will fail for private repositories."
-        )
+    if LOCAL_FILE:
+        local_path = Path(LOCAL_FILE)
+        if not local_path.exists():
+            logger.error(f"Local file not found: {local_path}")
+            sys.exit(1)
 
-    extract_and_save_nodes(
-        repo_url=REPO_URL,
-        branch=BRANCH,
-        github_token=GITHUB_TOKEN,
-        pipeline_filter=PIPELINE_FILTER,
-    )
+        logger.info(f"Local file mode — parsing: {local_path}")
+
+        script_dir = Path(__file__).resolve().parent
+        repo_root = _find_repo_root(script_dir)
+        target_dir = repo_root / "target"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_file = target_dir / "matillion_nodes.json"
+
+        parsed = parse_matillion_yaml(local_path)
+        nodes = convert_to_paradime_nodes(
+            parsed_pipeline=parsed,
+            repo_url=str(local_path.parent),
+            yaml_file_path=local_path.name,
+            branch="local",
+        )
+        logger.info(f"Generated {len(nodes)} node(s) (1 pipeline + {len(nodes) - 1} job(s))")
+
+        output_file.write_text(json.dumps(nodes, indent=2), encoding="utf-8")
+        logger.info(f"Saved to {output_file}")
+    else:
+        GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+        if not GITHUB_TOKEN:
+            logger.warning(
+                "GITHUB_TOKEN not set – attempting anonymous download. "
+                "This will fail for private repositories."
+            )
+
+        extract_and_save_nodes(
+            repo_url=REPO_URL,
+            branch=BRANCH,
+            github_token=GITHUB_TOKEN,
+            pipeline_filter=PIPELINE_FILTER,
+        )

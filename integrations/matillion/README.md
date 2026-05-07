@@ -7,6 +7,7 @@ This integration parses Matillion orchestration pipelines (`.orch.yaml` files) f
 ## Features
 
 - 📥 **Automatic Repo Download**: Downloads Matillion pipeline repos via ZIP (no Git required)
+- 📂 **Local File Mode**: Parse a local `.orch.yaml` file directly — no GitHub download needed
 - 🔍 **YAML Parsing**: Extracts pipeline metadata and all component definitions
 - 🔄 **Pipeline Type Detection**: Automatically classifies each pipeline as **ingestion** (SaaS → Snowflake) or **reverse ETL** (Snowflake → destination)
 - 🔗 **Lineage Tracking**: Ingestion jobs link downstream to dbt source tables; reverse ETL jobs link upstream from dbt models/views
@@ -79,6 +80,7 @@ All configuration is done via **environment variables** — no editing of `parse
 
 | Variable                    | Required | Default                                                          | Description                                                                                          |
 |-----------------------------|----------|------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|
+| `MATILLION_LOCAL_FILE`      | No       | —                                                                | Absolute path to a local `.orch.yaml` file. When set (or passed as a CLI arg), skips the GitHub download entirely |
 | `MATILLION_REPO_URL`        | No       | `https://github.com/paradime-sandbox/matillion-pipelines`        | URL of the GitHub repo containing `.orch.yaml` files                                                 |
 | `MATILLION_BRANCH`          | No       | `main`                                                           | Git branch to download                                                                               |
 | `MATILLION_PIPELINE_FILTER` | No       | *(empty — process all)*                                          | Comma-separated list of repo-relative `.orch.yaml` paths to process. Leave unset to process **all** |
@@ -153,7 +155,18 @@ cd integrations/matillion
 poetry run python parse.py
 ```
 
-### Option 3: Upload Only (requires existing `target/matillion_nodes.json`)
+### Option 3: Parse a Local File (no GitHub download)
+Pass the file path as a CLI argument or env var — useful for testing before committing to a repo:
+```bash
+# As a CLI argument
+poetry run python integrations/matillion/parse.py /path/to/your/pipeline.orch.yaml
+
+# As an environment variable
+export MATILLION_LOCAL_FILE="/path/to/your/pipeline.orch.yaml"
+poetry run python integrations/matillion/parse.py
+```
+
+### Option 4: Upload Only (requires existing `target/matillion_nodes.json`)
 ```bash
 cd integrations/matillion
 poetry run python upload_to_paradime.py

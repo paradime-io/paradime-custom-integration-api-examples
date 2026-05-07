@@ -7,6 +7,7 @@ This integration parses Streamlit applications to extract SQL queries and create
 ## Features
 
 - 📥 **Automatic Repo Download**: Downloads Streamlit repos via ZIP (no Git required)
+- 📂 **Local File Mode**: Parse a local `.py` file directly — no GitHub download needed
 - 🔍 **SQL Parsing**: Extracts SQL queries from Streamlit Python files, including CTEs (`WITH ... AS (SELECT ...)`)
 - 📊 **Chart Detection**: Identifies bar charts, line charts, dataframes, etc.
 - 🔗 **Lineage Tracking**: Links Streamlit charts to upstream dbt models
@@ -59,13 +60,14 @@ All configuration is done via **environment variables** — no editing of `parse
 
 ### Parsing Variables
 
-| Variable                | Required | Default                                                          | Description                                                                                              |
-|-------------------------|----------|------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
-| `STREAMLIT_REPO_URL`    | No       | `https://github.com/paradime-sandbox/streamlit-f1-analysis`      | URL of the GitHub repo containing the Streamlit app                                                      |
-| `STREAMLIT_BRANCH`      | No       | `main`                                                           | Git branch to download                                                                                   |
-| `STREAMLIT_APP_NAME`    | No       | `F1 Analysis Dashboard`                                          | Display name for the App node(s) in Paradime                                                             |
-| `STREAMLIT_FILE_FILTER` | No       | *(uses built-in default path)*                                   | Comma-separated repo-relative `.py` paths to parse. Supports **one or more files**. Leave unset for the default |
-| `GITHUB_TOKEN`          | No*      | —                                                                | GitHub PAT. Required for private repos                                                                   |
+| Variable                 | Required | Default                                                          | Description                                                                                              |
+|--------------------------|----------|------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
+| `STREAMLIT_LOCAL_FILE`   | No       | —                                                                | Absolute path to a local `.py` file. When set (or passed as a CLI arg), skips the GitHub download entirely |
+| `STREAMLIT_REPO_URL`     | No       | `https://github.com/paradime-sandbox/streamlit-f1-analysis`      | URL of the GitHub repo containing the Streamlit app                                                      |
+| `STREAMLIT_BRANCH`       | No       | `main`                                                           | Git branch to download                                                                                   |
+| `STREAMLIT_APP_NAME`     | No       | `F1 Analysis Dashboard`                                          | Display name for the App node(s) in Paradime                                                             |
+| `STREAMLIT_FILE_FILTER`  | No       | *(uses built-in default path)*                                   | Comma-separated repo-relative `.py` paths to parse. Supports **one or more files**. Leave unset for the default |
+| `GITHUB_TOKEN`           | No*      | —                                                                | GitHub PAT. Required for private repos                                                                   |
 
 > \* Anonymous download works for public repos. For private repos, `GITHUB_TOKEN` is required.
 
@@ -150,7 +152,18 @@ cd integrations/streamlit
 poetry run python parse.py
 ```
 
-### Option 3: Upload Only (requires existing `target/streamlit_nodes.json`)
+### Option 3: Parse a Local File (no GitHub download)
+Pass the file path as a CLI argument or env var — useful for testing before committing to a repo:
+```bash
+# As a CLI argument
+poetry run python integrations/streamlit/parse.py /path/to/your/streamlit_app.py
+
+# As an environment variable
+export STREAMLIT_LOCAL_FILE="/path/to/your/streamlit_app.py"
+poetry run python integrations/streamlit/parse.py
+```
+
+### Option 4: Upload Only (requires existing `target/streamlit_nodes.json`)
 ```bash
 cd integrations/streamlit
 poetry run python upload_to_paradime.py
