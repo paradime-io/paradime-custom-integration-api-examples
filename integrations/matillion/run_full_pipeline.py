@@ -27,11 +27,12 @@ from pathlib import Path
 def check_environment() -> bool:
     """Check that all required environment variables are present."""
     required_vars = {
-        "GITHUB_TOKEN": "GitHub Personal Access Token",
         "PARADIME_API_ENDPOINT": "Paradime API endpoint",
         "PARADIME_API_KEY": "Paradime API key",
         "PARADIME_API_SECRET": "Paradime API secret",
     }
+    if not os.getenv("MATILLION_LOCAL_DIR") and not os.getenv("MATILLION_LOCAL_FILE"):
+        required_vars["GITHUB_TOKEN"] = "GitHub Personal Access Token"
 
     missing: list[str] = []
     for var, description in required_vars.items():

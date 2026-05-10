@@ -32,9 +32,12 @@ class SQLTableTracker:
 
     def _create_schema(self):
         """Create the DuckDB schema for storing table usage."""
+        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_table_usage START 1")
+        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_app_metadata START 1")
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS table_usage (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY DEFAULT nextval('seq_table_usage'),
                 file_path VARCHAR,
                 chart_type VARCHAR,
                 chart_name VARCHAR,
@@ -45,10 +48,10 @@ class SQLTableTracker:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS app_metadata (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY DEFAULT nextval('seq_app_metadata'),
                 file_path VARCHAR,
                 app_title VARCHAR,
                 app_description TEXT,
@@ -70,7 +73,14 @@ class SQLTableTracker:
             content = f.read()
 
         sql_queries = []
-        
+        seen_sql: Set[str] = set()
+
+        def _add(sql_text: str, line_number: int | None) -> None:
+            key = sql_text.strip()
+            if key and key not in seen_sql and self._looks_like_sql(key):
+                seen_sql.add(key)
+                sql_queries.append({'sql': key, 'line_number': line_number})
+
         # Parse the Python AST
         try:
             tree = ast.parse(content)
@@ -81,76 +91,53 @@ class SQLTableTracker:
         # Find all string literals that look like SQL
         for node in ast.walk(tree):
             if isinstance(node, ast.Str):
-                sql_text = node.s
-                if self._looks_like_sql(sql_text):
-                    sql_queries.append({
-                        'sql': sql_text,
-                        'line_number': node.lineno if hasattr(node, 'lineno') else None
-                    })
+                _add(node.s, node.lineno if hasattr(node, 'lineno') else None)
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-                sql_text = node.value
-                if self._looks_like_sql(sql_text):
-                    sql_queries.append({
-                        'sql': sql_text,
-                        'line_number': node.lineno if hasattr(node, 'lineno') else None
-                    })
+                _add(node.value, node.lineno if hasattr(node, 'lineno') else None)
 
-        # Also use regex as backup to catch f-strings and other patterns
+        # Regex fallback to catch f-strings and session.sql() patterns
         sql_pattern = r'session\.sql\s*\(\s*[f]?["\']+(.*?)["\']+'
         for match in re.finditer(sql_pattern, content, re.DOTALL | re.IGNORECASE):
-            sql_text = match.group(1)
             line_number = content[:match.start()].count('\n') + 1
-            
-            # Clean up the SQL text
-            sql_text = sql_text.strip()
-            
-            if sql_text and self._looks_like_sql(sql_text):
-                sql_queries.append({
-                    'sql': sql_text,
-                    'line_number': line_number
-                })
+            _add(match.group(1), line_number)
 
         return sql_queries
 
     def _looks_like_sql(self, text: str) -> bool:
         """
         Check if a string looks like SQL.
-        
+
         Args:
             text: String to check
-            
+
         Returns:
             True if the string looks like SQL
         """
-        # Must have reasonable length
         if len(text.strip()) < 15:
             return False
-            
+
         text_upper = text.upper().strip()
-        
-        # Must start with SELECT (most common for analytics)
-        if not text_upper.startswith('SELECT'):
+
+        # Accept plain SELECT queries and CTEs (WITH ... AS ( SELECT ...))
+        is_select = text_upper.startswith('SELECT')
+        is_cte = text_upper.startswith('WITH') and 'SELECT' in text_upper
+        if not (is_select or is_cte):
             return False
-        
-        # Must contain FROM keyword
+
         if 'FROM' not in text_upper:
             return False
-        
-        # Should not look like natural language
-        # Check for common English sentence patterns
+
         english_indicators = [
             'THE ', 'A ', 'AN ', 'IS ', 'ARE ', 'WAS ', 'WERE ',
             'THIS ', 'THAT ', 'THESE ', 'THOSE ', 'WILL ', 'CAN '
         ]
-        
-        # Count how many English indicators are at word boundaries
-        english_count = sum(1 for indicator in english_indicators 
-                           if f' {indicator}' in f' {text_upper}' or text_upper.startswith(indicator))
-        
-        # If it has too many English words, it's probably not SQL
+        english_count = sum(
+            1 for indicator in english_indicators
+            if f' {indicator}' in f' {text_upper}' or text_upper.startswith(indicator)
+        )
         if english_count > 2:
             return False
-            
+
         return True
 
     def extract_tables_from_sql(self, sql: str, dialect: str = "snowflake") -> Set[str]:
@@ -337,15 +324,17 @@ class SQLTableTracker:
         
         # Store app metadata
         if app_title or app_description:
-            self.conn.execute("""
-                INSERT INTO app_metadata (id, file_path, app_title, app_description)
-                VALUES (?, ?, ?, ?)
-            """, (
-                1,
-                str(file_path),
-                app_title,
-                app_description
-            ))
+            try:
+                self.conn.execute("""
+                    INSERT INTO app_metadata (file_path, app_title, app_description)
+                    VALUES (?, ?, ?)
+                """, (
+                    str(file_path),
+                    app_title,
+                    app_description,
+                ))
+            except Exception as e:
+                print(f"Warning: could not store app metadata for {file_path}: {e}")
             print(f"App Metadata:")
             print(f"  Title: {app_title or 'Not found'}")
             print(f"  Description: {app_description[:100] if app_description else 'Not found'}...")
@@ -365,26 +354,37 @@ class SQLTableTracker:
                 continue
             
             # Extract tables
-            tables = self.extract_tables_from_sql(sql)
-            
+            try:
+                tables = self.extract_tables_from_sql(sql)
+            except Exception as e:
+                print(f"  Warning: could not extract tables from query at line {line_number}: {e}")
+                tables = set()
+
             # Infer chart information
-            chart_type, chart_name, chart_caption = self.infer_chart_info(file_content, line_number or 0)
-            
+            try:
+                chart_type, chart_name, chart_caption = self.infer_chart_info(file_content, line_number or 0)
+            except Exception as e:
+                print(f"  Warning: could not infer chart info at line {line_number}: {e}")
+                chart_type, chart_name, chart_caption = "unknown", None, None
+
             # Store in database
-            self.conn.execute("""
-                INSERT INTO table_usage (id, file_path, chart_type, chart_name, chart_caption, line_number, sql_query, tables_used)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                idx + 1,
-                str(file_path),
-                chart_type,
-                chart_name,
-                chart_caption,
-                line_number,
-                sql,
-                list(tables)
-            ))
-            
+            try:
+                self.conn.execute("""
+                    INSERT INTO table_usage (file_path, chart_type, chart_name, chart_caption, line_number, sql_query, tables_used)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(file_path),
+                    chart_type,
+                    chart_name,
+                    chart_caption,
+                    line_number,
+                    sql,
+                    list(tables),
+                ))
+            except Exception as e:
+                print(f"  Warning: could not store query at line {line_number}: {e}")
+                continue
+
             print(f"  [{idx+1}] {chart_type}: {chart_name or 'Unnamed'}")
             print(f"      Caption: {chart_caption or 'None'}")
             print(f"      Tables: {', '.join(tables) or 'None'}")

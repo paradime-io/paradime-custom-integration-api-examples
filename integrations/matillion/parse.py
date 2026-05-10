@@ -20,8 +20,10 @@ Lineage
 
 Usage:
     python parse.py
+    python parse.py /path/to/local/pipeline.orch.yaml
 
 Environment Variables:
+    MATILLION_LOCAL_FILE    Absolute path to a local .orch.yaml file to parse (skips GitHub download)
     GITHUB_TOKEN            GitHub Personal Access Token (needed for private repos)
 """
 
@@ -108,6 +110,14 @@ PIPELINE_FILTER: list[str] | None = (
     if _raw_filter
     else None
 )
+
+# Local file mode: skip GitHub download entirely.
+# Set via env var or pass as the first CLI argument.
+_local_file_arg = sys.argv[1] if len(sys.argv) > 1 else None
+LOCAL_FILE: str | None = os.getenv("MATILLION_LOCAL_FILE") or _local_file_arg
+
+# Local directory mode: process all .orch.yaml files in a directory.
+LOCAL_DIR: str | None = os.getenv("MATILLION_LOCAL_DIR")
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +229,7 @@ def convert_to_paradime_nodes(
     nodes: list[dict[str, Any]] = []
 
     pipeline_name: str = parsed_pipeline["pipeline_name"]
+    pipeline_type: str = parsed_pipeline.get("pipeline_type", "unknown")
     description: str = parsed_pipeline["description"]
     components: list[dict[str, Any]] = parsed_pipeline["components"]
 
@@ -238,8 +249,13 @@ def convert_to_paradime_nodes(
         if c["type"] != "start" and c["skipped"]
     ]
 
+    type_label = {
+        "ingestion": "ingestion (SaaS → Snowflake)",
+        "reverse_etl": "reverse ETL (Snowflake → destination)",
+    }.get(pipeline_type, "orchestration")
+
     pipeline_description = description or (
-        f"Matillion orchestration pipeline with {len(active_jobs)} active job(s)"
+        f"Matillion {type_label} pipeline with {len(active_jobs)} active job(s)"
         + (f" and {len(skipped_jobs)} skipped job(s)" if skipped_jobs else "")
         + "."
     )
@@ -267,18 +283,18 @@ def convert_to_paradime_nodes(
 
         comp_name: str = component["name"]
         output_table: str | None = component["output_table"]
+        source_table: str | None = component["source_table"]
         endpoint: str | None = component["endpoint"]
         skipped: bool = component["skipped"]
 
         # Build a readable description
-        # Action parts (endpoint + table) are joined with "and".
-        # The skipped flag is appended separately so it reads as a status,
-        # not as a third action in the chain.
         action_parts = []
         if endpoint:
             action_parts.append(f"Calls the **{endpoint}** API endpoint")
-        if output_table:
+        if pipeline_type == "ingestion" and output_table:
             action_parts.append(f"writes results to Snowflake table `{output_table}`")
+        elif pipeline_type == "reverse_etl" and source_table:
+            action_parts.append(f"reads from Snowflake table/view `{source_table}`")
 
         if action_parts:
             job_description = " and ".join(action_parts)
@@ -290,8 +306,7 @@ def convert_to_paradime_nodes(
             if skipped:
                 job_description += " *(currently skipped)*"
 
-        # The Job's upstream dependencies come from the Pipeline node itself
-        # (the pipeline orchestrates this job)
+        # Upstream always includes the parent Pipeline node
         job_upstream: list[dict[str, Any]] = [
             {
                 "integration_name": "Matillion",
@@ -300,14 +315,23 @@ def convert_to_paradime_nodes(
             }
         ]
 
-        # The Job's downstream dependency is the Snowflake table it writes to.
-        # This table name matches the dbt source table, creating lineage:
-        #   Matillion Job → Snowflake table ← dbt source → dbt models
         job_downstream: list[dict[str, Any]] = []
-        if output_table:
-            job_downstream.append(
-                {"table_name": _table_name_to_dbt_model(output_table)}
-            )
+
+        if pipeline_type == "ingestion":
+            # Ingestion: Job writes to a Snowflake landing table
+            # Lineage: Matillion Job → Snowflake table ← dbt source
+            if output_table:
+                job_downstream.append(
+                    {"table_name": _table_name_to_dbt_model(output_table)}
+                )
+
+        elif pipeline_type == "reverse_etl":
+            # Reverse ETL: Job reads from a dbt model/view and pushes to destination
+            # Lineage: dbt model → Matillion Job
+            if source_table:
+                job_upstream.append(
+                    {"table_name": _table_name_to_dbt_model(source_table)}
+                )
 
         job_node: dict[str, Any] = {
             "name": f"{pipeline_name}.{comp_name}",
@@ -405,18 +429,27 @@ def extract_and_save_nodes(
     # Step 3 & 4: Parse each file and accumulate nodes.
     # The try/finally guarantees temp_repo is removed even if parsing fails.
     all_nodes: list[dict[str, Any]] = []
+    failed_files: list[str] = []
     try:
         for orch_file in orch_files:
             # Relative path inside the repo (for building GitHub source links)
             relative_path = str(orch_file.relative_to(temp_dir))
 
-            parsed = parse_matillion_yaml(orch_file)
-            nodes = convert_to_paradime_nodes(
-                parsed_pipeline=parsed,
-                repo_url=repo_url,
-                yaml_file_path=relative_path,
-                branch=branch,
-            )
+            try:
+                parsed = parse_matillion_yaml(orch_file)
+                nodes = convert_to_paradime_nodes(
+                    parsed_pipeline=parsed,
+                    repo_url=repo_url,
+                    yaml_file_path=relative_path,
+                    branch=branch,
+                )
+            except Exception as exc:
+                logger.error(
+                    f"  Failed to parse '{orch_file.name}' — skipping. Error: {exc}"
+                )
+                failed_files.append(relative_path)
+                continue
+
             logger.info(
                 f"  '{orch_file.name}' → {len(nodes)} node(s) "
                 f"(1 pipeline + {len(nodes) - 1} job(s))"
@@ -431,18 +464,92 @@ def extract_and_save_nodes(
     output_file.write_text(json.dumps(all_nodes, indent=2), encoding="utf-8")
     logger.info(f"Saved {len(all_nodes)} total nodes to {output_file}")
 
+    # Step 6: Write failed files log (only if there were failures)
+    if failed_files:
+        failed_log = target_dir / "matillion_parse_failures.txt"
+        failed_log.write_text("\n".join(failed_files) + "\n", encoding="utf-8")
+        logger.warning(
+            f"{len(failed_files)} file(s) could not be parsed and were skipped:"
+        )
+        for path in failed_files:
+            logger.warning(f"  - {path}")
+        logger.warning(f"Full list written to {failed_log}")
+
 
 if __name__ == "__main__":
-    GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-    if not GITHUB_TOKEN:
-        logger.warning(
-            "GITHUB_TOKEN not set – attempting anonymous download. "
-            "This will fail for private repositories."
-        )
+    if LOCAL_DIR:
+        local_dir_path = Path(LOCAL_DIR)
+        if not local_dir_path.is_dir():
+            logger.error(f"Local directory not found: {local_dir_path}")
+            sys.exit(1)
 
-    extract_and_save_nodes(
-        repo_url=REPO_URL,
-        branch=BRANCH,
-        github_token=GITHUB_TOKEN,
-        pipeline_filter=PIPELINE_FILTER,
-    )
+        orch_files = list(local_dir_path.glob("**/*.orch.yaml"))
+        if not orch_files:
+            logger.error(f"No .orch.yaml files found in: {local_dir_path}")
+            sys.exit(1)
+
+        logger.info(f"Local directory mode — processing {len(orch_files)} file(s) from {local_dir_path}")
+
+        script_dir = Path(__file__).resolve().parent
+        repo_root = _find_repo_root(script_dir)
+        target_dir = repo_root / "target"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_file = target_dir / "matillion_nodes.json"
+
+        all_nodes: list[dict] = []
+        for orch_file in orch_files:
+            try:
+                parsed = parse_matillion_yaml(orch_file)
+                nodes = convert_to_paradime_nodes(
+                    parsed_pipeline=parsed,
+                    repo_url=str(local_dir_path),
+                    yaml_file_path=orch_file.name,
+                    branch="local",
+                )
+                logger.info(f"  '{orch_file.name}' → {len(nodes)} node(s) (1 pipeline + {len(nodes) - 1} job(s))")
+                all_nodes.extend(nodes)
+            except Exception as exc:
+                logger.error(f"  Failed to parse '{orch_file.name}' — skipping. Error: {exc}")
+
+        output_file.write_text(json.dumps(all_nodes, indent=2), encoding="utf-8")
+        logger.info(f"Saved {len(all_nodes)} total nodes to {output_file}")
+
+    elif LOCAL_FILE:
+        local_path = Path(LOCAL_FILE)
+        if not local_path.exists():
+            logger.error(f"Local file not found: {local_path}")
+            sys.exit(1)
+
+        logger.info(f"Local file mode — parsing: {local_path}")
+
+        script_dir = Path(__file__).resolve().parent
+        repo_root = _find_repo_root(script_dir)
+        target_dir = repo_root / "target"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_file = target_dir / "matillion_nodes.json"
+
+        parsed = parse_matillion_yaml(local_path)
+        nodes = convert_to_paradime_nodes(
+            parsed_pipeline=parsed,
+            repo_url=str(local_path.parent),
+            yaml_file_path=local_path.name,
+            branch="local",
+        )
+        logger.info(f"Generated {len(nodes)} node(s) (1 pipeline + {len(nodes) - 1} job(s))")
+
+        output_file.write_text(json.dumps(nodes, indent=2), encoding="utf-8")
+        logger.info(f"Saved to {output_file}")
+    else:
+        GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+        if not GITHUB_TOKEN:
+            logger.warning(
+                "GITHUB_TOKEN not set – attempting anonymous download. "
+                "This will fail for private repositories."
+            )
+
+        extract_and_save_nodes(
+            repo_url=REPO_URL,
+            branch=BRANCH,
+            github_token=GITHUB_TOKEN,
+            pipeline_filter=PIPELINE_FILTER,
+        )

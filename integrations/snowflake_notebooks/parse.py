@@ -21,8 +21,10 @@ Lineage (Option B — dbt feeds the notebook)
 
 Usage:
     python parse.py
+    python parse.py /path/to/local/notebook.ipynb
 
 Environment Variables:
+    SNOW_NOTEBOOK_LOCAL_FILE    Absolute path to a local .ipynb file to parse (skips GitHub download)
     SNOW_NOTEBOOK_REPO_URL      GitHub repo URL
     SNOW_NOTEBOOK_BRANCH        Branch to download (default: dev-fdl-snow-workbook)
     SNOW_NOTEBOOK_FILE_FILTER   Comma-separated repo-relative .ipynb paths to parse.
@@ -73,6 +75,11 @@ FILE_FILTER: list[str] | None = (
     if _raw_filter
     else None
 )
+
+# Local file mode: skip GitHub download entirely.
+# Set via env var or pass as the first CLI argument.
+_local_file_arg = sys.argv[1] if len(sys.argv) > 1 else None
+LOCAL_FILE: str | None = os.getenv("SNOW_NOTEBOOK_LOCAL_FILE") or _local_file_arg
 
 
 # ---------------------------------------------------------------------------
@@ -415,16 +422,59 @@ def extract_and_save_nodes(
 
 
 if __name__ == "__main__":
-    GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-    if not GITHUB_TOKEN:
-        logger.warning(
-            "GITHUB_TOKEN not set – attempting anonymous download. "
-            "This will fail for private repositories."
-        )
+    if LOCAL_FILE:
+        local_path = Path(LOCAL_FILE)
+        if not local_path.exists():
+            logger.error(f"Local path not found: {local_path}")
+            sys.exit(1)
 
-    extract_and_save_nodes(
-        repo_url=REPO_URL,
-        branch=BRANCH,
-        github_token=GITHUB_TOKEN,
-        file_filter=FILE_FILTER,
-    )
+        script_dir = Path(__file__).resolve().parent
+        repo_root = _find_repo_root(script_dir)
+        target_dir = repo_root / "target"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_file = target_dir / "snowflake_notebooks_nodes.json"
+
+        if local_path.is_dir():
+            notebook_files = sorted(local_path.rglob("*.ipynb"))
+            if not notebook_files:
+                logger.error(f"No .ipynb files found in '{local_path}'.")
+                sys.exit(1)
+            logger.info(
+                f"Local directory mode — found {len(notebook_files)} notebook(s): "
+                + ", ".join(f.name for f in notebook_files)
+            )
+        else:
+            notebook_files = [local_path]
+            logger.info(f"Local file mode — parsing: {local_path}")
+
+        all_nodes: list[dict[str, Any]] = []
+        for notebook_file in notebook_files:
+            try:
+                parsed = parse_notebook_file(notebook_file)
+                nodes = convert_to_paradime_nodes(
+                    parsed_notebook=parsed,
+                    repo_url=str(notebook_file.parent),
+                    notebook_file_path=notebook_file.name,
+                    branch="local",
+                )
+                logger.info(f"  '{notebook_file.name}' → {len(nodes)} node(s) (1 notebook + {len(nodes) - 1} cell(s))")
+                all_nodes.extend(nodes)
+            except Exception as exc:
+                logger.error(f"  Failed to parse '{notebook_file.name}' — skipping. Error: {exc}")
+
+        output_file.write_text(json.dumps(all_nodes, indent=2), encoding="utf-8")
+        logger.info(f"Saved {len(all_nodes)} total node(s) to {output_file}")
+    else:
+        GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+        if not GITHUB_TOKEN:
+            logger.warning(
+                "GITHUB_TOKEN not set – attempting anonymous download. "
+                "This will fail for private repositories."
+            )
+
+        extract_and_save_nodes(
+            repo_url=REPO_URL,
+            branch=BRANCH,
+            github_token=GITHUB_TOKEN,
+            file_filter=FILE_FILTER,
+        )
