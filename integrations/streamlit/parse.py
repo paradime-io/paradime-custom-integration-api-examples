@@ -94,6 +94,7 @@ _local_file_arg = sys.argv[1] if len(sys.argv) > 1 else None
 LOCAL_FILE: str | None = os.getenv("STREAMLIT_LOCAL_FILE") or _local_file_arg
 
 
+
 # ---------------------------------------------------------------------------
 # Streamlit file detection
 # ---------------------------------------------------------------------------

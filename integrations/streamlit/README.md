@@ -167,6 +167,7 @@ poetry run python integrations/streamlit/parse.py
 
 When a directory is provided, app names follow the same top-level subfolder rule as GitHub mode.
 
+
 ### Option 4: Upload Only (requires existing `target/streamlit_nodes.json`)
 ```bash
 cd integrations/streamlit
