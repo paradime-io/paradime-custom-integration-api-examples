@@ -48,7 +48,7 @@ def _component_role(component_type: str) -> str:
         One of ``"ingestion_input"``, ``"reverse_etl_output"``, ``"utility"``.
     """
     t = component_type.lower()
-    if "-input-" in t:
+    if "-input-" in t or t == "mongodb-query":
         return "ingestion_input"
     if t.endswith("-output"):
         return "reverse_etl_output"
@@ -85,7 +85,7 @@ def _parse_component(name: str, definition: dict[str, Any]) -> dict[str, Any]:
 
     # Pull the Snowflake output connector block (ingestion: where data lands)
     sf_output: dict[str, Any] = params.get("snowflake-output-connector-v0", {})
-    output_table: str | None = sf_output.get("tableName") or None
+    output_table: str | None = sf_output.get("tableName") or params.get("targetTable") or None
 
     # Pull the Snowflake source table (reverse ETL: where data is read from)
     source_table: str | None = params.get("sourceTable") or None
@@ -183,6 +183,28 @@ def parse_matillion_yaml(file_path: Path) -> dict[str, Any]:
         pipeline_type = "ingestion"
     else:
         pipeline_type = "unknown"
+
+    # Some pipelines land raw data into a _lnd table then merge it into a _stg
+    # table via a Snowflake stored procedure called by a sql-executor. When this
+    # pattern is detected, rewrite output tables to point at the staging layer
+    # so lineage joins against the correct dbt source table.
+    has_stg_merge = any(
+        c["type"] == "sql-executor"
+        and "_STG_MERGE" in (
+            components_block.get(c["name"], {})
+            .get("parameters", {})
+            .get("sqlScript", "")
+            .upper()
+        )
+        for c in components
+    )
+    if has_stg_merge:
+        for c in components:
+            if c["output_table"] and c["output_table"].upper().endswith("_LND"):
+                c["output_table"] = c["output_table"][:-4] + "_STG"
+        logger.info(
+            f"  Staging merge detected — rewrote _LND → _STG for ingestion output tables"
+        )
 
     # Warn about non-utility components that weren't classified — likely new
     # connector types that don't yet match the -input- / -output naming pattern

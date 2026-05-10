@@ -116,6 +116,9 @@ PIPELINE_FILTER: list[str] | None = (
 _local_file_arg = sys.argv[1] if len(sys.argv) > 1 else None
 LOCAL_FILE: str | None = os.getenv("MATILLION_LOCAL_FILE") or _local_file_arg
 
+# Local directory mode: process all .orch.yaml files in a directory.
+LOCAL_DIR: str | None = os.getenv("MATILLION_LOCAL_DIR")
+
 
 # ---------------------------------------------------------------------------
 # GitHub helpers
@@ -474,7 +477,44 @@ def extract_and_save_nodes(
 
 
 if __name__ == "__main__":
-    if LOCAL_FILE:
+    if LOCAL_DIR:
+        local_dir_path = Path(LOCAL_DIR)
+        if not local_dir_path.is_dir():
+            logger.error(f"Local directory not found: {local_dir_path}")
+            sys.exit(1)
+
+        orch_files = list(local_dir_path.glob("**/*.orch.yaml"))
+        if not orch_files:
+            logger.error(f"No .orch.yaml files found in: {local_dir_path}")
+            sys.exit(1)
+
+        logger.info(f"Local directory mode — processing {len(orch_files)} file(s) from {local_dir_path}")
+
+        script_dir = Path(__file__).resolve().parent
+        repo_root = _find_repo_root(script_dir)
+        target_dir = repo_root / "target"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_file = target_dir / "matillion_nodes.json"
+
+        all_nodes: list[dict] = []
+        for orch_file in orch_files:
+            try:
+                parsed = parse_matillion_yaml(orch_file)
+                nodes = convert_to_paradime_nodes(
+                    parsed_pipeline=parsed,
+                    repo_url=str(local_dir_path),
+                    yaml_file_path=orch_file.name,
+                    branch="local",
+                )
+                logger.info(f"  '{orch_file.name}' → {len(nodes)} node(s) (1 pipeline + {len(nodes) - 1} job(s))")
+                all_nodes.extend(nodes)
+            except Exception as exc:
+                logger.error(f"  Failed to parse '{orch_file.name}' — skipping. Error: {exc}")
+
+        output_file.write_text(json.dumps(all_nodes, indent=2), encoding="utf-8")
+        logger.info(f"Saved {len(all_nodes)} total nodes to {output_file}")
+
+    elif LOCAL_FILE:
         local_path = Path(LOCAL_FILE)
         if not local_path.exists():
             logger.error(f"Local file not found: {local_path}")

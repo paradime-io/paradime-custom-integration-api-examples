@@ -63,11 +63,11 @@ dbt Staging / Mart Models
 Components with `*-output` types (e.g. `salesforce-output`) read from a Snowflake view or table produced by dbt and push data to an external destination. The lineage connects dbt models upstream into the Matillion job.
 
 ```
-dbt Model / View    (e.g. SFDC_ACCOUNT360_CUSTOMER_SCORECARD_VW)
+dbt Model / View    (e.g. MY_EXPORT_VIEW)
     ↓
 Matillion Job       (reads from Snowflake, writes to destination)
     ↓
-External Destination (e.g. Salesforce object)
+External Destination (e.g. CRM object)
 ```
 
 ---

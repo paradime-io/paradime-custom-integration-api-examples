@@ -184,14 +184,17 @@ cd integrations/snowflake_notebooks
 poetry run python parse.py
 ```
 
-### Option 3: Parse a Local File (no GitHub download)
-Pass the file path as a CLI argument or env var — useful for testing before committing to a repo:
+### Option 3: Parse a Local File or Directory (no GitHub download)
+Pass a file or directory path as a CLI argument or env var — useful for testing before committing to a repo:
 ```bash
-# As a CLI argument
+# Single local file
 poetry run python integrations/snowflake_notebooks/parse.py /path/to/your/notebook.ipynb
 
+# Local directory — finds all .ipynb files inside it
+poetry run python integrations/snowflake_notebooks/parse.py /path/to/your/notebooks/
+
 # As an environment variable
-export SNOW_NOTEBOOK_LOCAL_FILE="/path/to/your/notebook.ipynb"
+export SNOW_NOTEBOOK_LOCAL_FILE="/path/to/your/notebooks/"
 poetry run python integrations/snowflake_notebooks/parse.py
 ```
 

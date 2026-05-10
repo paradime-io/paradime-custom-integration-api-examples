@@ -81,11 +81,11 @@ All configuration is done via **environment variables** — no editing of `parse
 
 ---
 
-## File Filtering
+## File Filtering & Auto-Discovery
 
-By default the parser uses the built-in fallback path (`H9RQV0GD3DTOB7H0/streamlit_app.py`).
+By default the parser downloads the repo and **auto-discovers** every `.py` file that contains `import streamlit`. No configuration needed for most repos.
 
-Set `STREAMLIT_FILE_FILTER` to parse a specific file — or a comma-separated list of files:
+Set `STREAMLIT_FILE_FILTER` to restrict to specific files when auto-discovery picks up too many:
 
 ```bash
 # Single file
@@ -97,18 +97,17 @@ export STREAMLIT_FILE_FILTER="apps/dashboard.py"
 # Multiple files — all processed in one run, output merged into nodes.json
 export STREAMLIT_FILE_FILTER="apps/dashboard.py,apps/explorer.py,apps/metrics.py"
 
-# Use the built-in default (leave unset)
+# Auto-discover all Streamlit files (default — leave unset)
 unset STREAMLIT_FILE_FILTER
 ```
 
 ### How multiple files work
 
-When `STREAMLIT_FILE_FILTER` contains more than one path:
+When more than one file is processed (via auto-discovery or a multi-path filter):
 
 1. The repo is downloaded **once**.
 2. Each file is parsed in turn, producing its own set of App + Chart nodes.
-3. To keep App node names unique, each is suffixed with the file stem:
-   `F1 Analysis Dashboard – dashboard`, `F1 Analysis Dashboard – explorer`, etc.
+3. App node names are derived from the **top-level subfolder** the file lives in — so a repo where each app has its own folder (e.g. `my_app/app.py`) gets clean names like `my_app`. Files at the repo root use their file stem.
 4. All nodes are merged into a **single `nodes.json`** — no manual merging needed.
 
 Any path not found in the downloaded repo is **skipped with a warning** (the run continues for the remaining files). If none of the listed files are found, the script exits with an error.
@@ -152,16 +151,22 @@ cd integrations/streamlit
 poetry run python parse.py
 ```
 
-### Option 3: Parse a Local File (no GitHub download)
-Pass the file path as a CLI argument or env var — useful for testing before committing to a repo:
+### Option 3: Parse a Local File or Directory (no GitHub download)
+Pass a file or directory path as a CLI argument or env var — useful for testing before committing to a repo:
 ```bash
-# As a CLI argument
+# Single local file
 poetry run python integrations/streamlit/parse.py /path/to/your/streamlit_app.py
 
+# Local directory — auto-discovers all Streamlit files inside it
+poetry run python integrations/streamlit/parse.py /path/to/your/streamlit_apps/
+
 # As an environment variable
-export STREAMLIT_LOCAL_FILE="/path/to/your/streamlit_app.py"
+export STREAMLIT_LOCAL_FILE="/path/to/your/streamlit_apps/"
 poetry run python integrations/streamlit/parse.py
 ```
+
+When a directory is provided, app names follow the same top-level subfolder rule as GitHub mode.
+
 
 ### Option 4: Upload Only (requires existing `target/streamlit_nodes.json`)
 ```bash
@@ -194,6 +199,9 @@ poetry run python upload_to_paradime.py
 ```bash
 export GITHUB_TOKEN="ghp_your_token_here"
 ```
+
+### "No Streamlit files found in the repository"
+Auto-discovery scans for `.py` files containing `import streamlit`. If none are found, either the repo has no Streamlit apps or they use a non-standard import. Set `STREAMLIT_FILE_FILTER` to point to the correct file(s) explicitly.
 
 ### "Filtered file not found and will be skipped"
 Verify each path in `STREAMLIT_FILE_FILTER` is relative to the repo root and the file actually exists on the target branch. Use the exact path as it appears in the repository.

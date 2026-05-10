@@ -94,6 +94,52 @@ _local_file_arg = sys.argv[1] if len(sys.argv) > 1 else None
 LOCAL_FILE: str | None = os.getenv("STREAMLIT_LOCAL_FILE") or _local_file_arg
 
 
+
+# ---------------------------------------------------------------------------
+# Streamlit file detection
+# ---------------------------------------------------------------------------
+
+def find_streamlit_files(directory: Path) -> list[Path]:
+    """
+    Recursively find all .py files in ``directory`` that import streamlit.
+
+    Args:
+        directory: Root directory to search.
+
+    Returns:
+        Sorted list of matching file paths.
+    """
+    matches = []
+    for py_file in sorted(directory.rglob("*.py")):
+        try:
+            content = py_file.read_text(encoding="utf-8", errors="ignore")
+            if "import streamlit" in content:
+                matches.append(py_file)
+        except OSError:
+            pass
+    return matches
+
+
+def _app_name_for_file(file: Path, root: Path) -> str:
+    """
+    Derive an app name from a file path relative to the scan root.
+
+    Uses the top-level subfolder name so that repos where each app lives in
+    its own folder (e.g. ``my_app/streamlit_app.py``) get a clean
+    name (``my_app``). Files sitting directly at the root fall back
+    to their file stem (e.g. ``streamlit_app``).
+
+    Args:
+        file: Absolute path to the .py file.
+        root: The directory that was scanned (the common ancestor).
+
+    Returns:
+        A short, human-readable app name string.
+    """
+    parts = file.relative_to(root).parts
+    return parts[0] if len(parts) > 1 else file.stem
+
+
 # ---------------------------------------------------------------------------
 # Repo root resolution
 # ---------------------------------------------------------------------------
@@ -477,17 +523,18 @@ def extract_and_save_nodes(
             + ", ".join(f.name for f in app_files)
         )
     else:
-        # Built-in default: the single known app file in the sandbox repo
-        default_path = "H9RQV0GD3DTOB7H0/streamlit_app.py"
-        default_file = temp_dir / default_path
-        if not default_file.exists():
+        # No filter — auto-discover all Streamlit .py files in the repo
+        app_files = find_streamlit_files(temp_dir)
+        if not app_files:
             logger.error(
-                f"Default Streamlit file not found: '{default_path}'. "
-                "Set STREAMLIT_FILE_FILTER to the correct repo-relative path."
+                "No Streamlit files found in the repository (no .py file contains 'import streamlit'). "
+                "Set STREAMLIT_FILE_FILTER to the correct repo-relative path(s)."
             )
             sys.exit(1)
-        app_files = [default_file]
-        logger.info(f"No filter set — using default file: '{default_path}'")
+        logger.info(
+            f"No filter set — auto-discovered {len(app_files)} Streamlit file(s): "
+            + ", ".join(f.name for f in app_files)
+        )
 
     # Step 3 & 4: Parse each file and accumulate nodes.
     # try/finally guarantees temp_repo is removed even if parsing fails.
@@ -497,11 +544,9 @@ def extract_and_save_nodes(
         for app_file in app_files:
             relative_path = str(app_file.relative_to(temp_dir))
 
-            # Use disambiguated app name when processing multiple files
             file_app_name = (
-                app_name
-                if len(app_files) == 1
-                else f"{app_name} – {app_file.stem}"
+                app_name if len(app_files) == 1
+                else _app_name_for_file(app_file, temp_dir)
             )
 
             try:
@@ -561,10 +606,8 @@ if __name__ == "__main__":
     if LOCAL_FILE:
         local_path = Path(LOCAL_FILE)
         if not local_path.exists():
-            logger.error(f"Local file not found: {local_path}")
+            logger.error(f"Local path not found: {local_path}")
             sys.exit(1)
-
-        logger.info(f"Local file mode — parsing: {local_path}")
 
         script_dir = Path(__file__).resolve().parent
         db_path = script_dir / "streamlit_analysis.duckdb"
@@ -573,22 +616,50 @@ if __name__ == "__main__":
         target_dir.mkdir(parents=True, exist_ok=True)
         output_file = target_dir / "streamlit_nodes.json"
 
-        parse_streamlit_app(local_path, db_path)
-        parsed_data, app_metadata = read_parsed_data(db_path)
-        if db_path.exists():
-            db_path.unlink()
+        # Directory mode: auto-discover all Streamlit files inside it
+        if local_path.is_dir():
+            app_files = find_streamlit_files(local_path)
+            if not app_files:
+                logger.error(
+                    f"No Streamlit files found in '{local_path}' "
+                    "(no .py file contains 'import streamlit')."
+                )
+                sys.exit(1)
+            logger.info(
+                f"Local directory mode — auto-discovered {len(app_files)} Streamlit file(s): "
+                + ", ".join(f.name for f in app_files)
+            )
+        else:
+            app_files = [local_path]
+            logger.info(f"Local file mode — parsing: {local_path}")
 
-        logger.info(f"Found {len(parsed_data)} SQL queries")
-        nodes = convert_to_paradime_nodes(
-            parsed_data=parsed_data,
-            app_metadata=app_metadata,
-            app_name=APP_NAME,
-            app_url=str(local_path),
-        )
-        logger.info(f"Generated {len(nodes)} node(s) (1 app + {len(nodes) - 1} chart(s))")
+        all_nodes: list[dict[str, Any]] = []
+        for app_file in app_files:
+            file_app_name = (
+                APP_NAME if len(app_files) == 1
+                else _app_name_for_file(app_file, local_path if local_path.is_dir() else local_path.parent)
+            )
+            try:
+                parse_streamlit_app(app_file, db_path)
+                parsed_data, app_metadata = read_parsed_data(db_path)
+                if db_path.exists():
+                    db_path.unlink()
+                logger.info(f"  '{app_file.name}' → {len(parsed_data)} SQL queries found")
+                nodes = convert_to_paradime_nodes(
+                    parsed_data=parsed_data,
+                    app_metadata=app_metadata,
+                    app_name=file_app_name,
+                    app_url=str(app_file),
+                )
+                logger.info(f"  '{app_file.name}' → {len(nodes)} node(s) (1 app + {len(nodes) - 1} chart(s))")
+                all_nodes.extend(nodes)
+            except Exception as exc:
+                logger.error(f"  Failed to parse '{app_file.name}' — skipping. Error: {exc}")
+                if db_path.exists():
+                    db_path.unlink()
 
-        output_file.write_text(json.dumps(nodes, indent=2), encoding="utf-8")
-        logger.info(f"Saved to {output_file}")
+        output_file.write_text(json.dumps(all_nodes, indent=2), encoding="utf-8")
+        logger.info(f"Saved {len(all_nodes)} total node(s) to {output_file}")
     else:
         GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
         if not GITHUB_TOKEN:
