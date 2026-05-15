@@ -11,80 +11,178 @@ Paradime custom integration nodes.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
 from pathlib import Path
 from typing import Any
 
+import sqlglot
+from sqlglot import exp, parse_one
+
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Regex patterns
+# Regex / constants
 # ---------------------------------------------------------------------------
-
-# Matches fully-qualified Snowflake table references: DATABASE.SCHEMA.TABLE
-# as well as two-part SCHEMA.TABLE references that appear after FROM / JOIN.
-_SQL_TABLE_RE = re.compile(
-    r"""
-    (?:FROM|JOIN)\s+          # preceded by FROM or JOIN keyword
-    (                         # capture group — the table reference
-        [\w$][\w$]*           # optional database or schema segment
-        (?:\.[\w$][\w$]*){1,2}  # one or two dot-separated name parts
-    )
-    (?:\s|;|$|\))             # followed by whitespace, semicolon, end, or paren
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
 
 # Snowflake Notebooks embed SQL as %%sql magic blocks.
 # We strip the magic header before parsing.
 _MAGIC_RE = re.compile(r"^%%sql[^\n]*\n?", re.IGNORECASE)
 
+# Match Python f-string placeholders like {var} or {obj.attr}.
+_PLACEHOLDER_RE = re.compile(r"\{[^}]+\}")
+
+# Substitution token used in place of f-string placeholders. Chosen so that
+# `placeholder.placeholder.table` parses as a 3-part identifier rather than
+# a numeric literal (which would happen with '1' → `1.1.table`).
+_PLACEHOLDER_TOKEN = "placeholder"
+
 
 # ---------------------------------------------------------------------------
-# Core parsing functions
+# SQL table extraction
 # ---------------------------------------------------------------------------
 
-def extract_tables_from_sql(sql_source: str) -> list[str]:
+def extract_tables_from_sql(sql_source: str, dialect: str = "snowflake") -> list[str]:
     """
-    Extract unique lower-cased table names referenced in a SQL snippet.
+    Return unique lower-cased bare table names that the SQL READS from.
 
-    Handles both fully-qualified (DB.SCHEMA.TABLE) and two-part (SCHEMA.TABLE)
-    references that follow a FROM or JOIN keyword.  The Snowflake Notebooks
-    ``%%sql`` magic header is stripped before scanning.
+    Uses sqlglot to walk the parse tree, restricting collection to tables that
+    appear under FROM / JOIN clauses. INSERT-target tables and CTE self-refs
+    are excluded so they don't pollute upstream lineage.
+
+    f-string placeholders (``{db}``, ``{sch}``, …) are substituted with a safe
+    identifier before parsing so partially-templated SQL still parses cleanly.
 
     Args:
-        sql_source: Raw SQL string (may include a ``%%sql`` magic header).
+        sql_source: Raw SQL string. ``%%sql`` magic headers and f-string
+            placeholders are handled transparently.
+        dialect:    sqlglot dialect (default: ``"snowflake"``).
 
     Returns:
-        Sorted list of unique lower-cased table names (bare name only, no
-        schema or database prefix).
+        Sorted list of unique lower-cased bare table names.
     """
-    # Remove Snowflake Notebooks magic prefix if present
     clean_sql = _MAGIC_RE.sub("", sql_source).strip()
+    if not clean_sql:
+        return []
+
+    processed = _PLACEHOLDER_RE.sub(_PLACEHOLDER_TOKEN, clean_sql)
+
+    try:
+        parsed = parse_one(processed, dialect=dialect)
+    except sqlglot.errors.ParseError as exc:
+        logger.debug(f"sqlglot parse error: {exc}")
+        return []
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug(f"sqlglot unexpected error: {exc}")
+        return []
+
+    if parsed is None:
+        return []
+
+    # Names declared as CTEs in this query — references to them should be
+    # treated as local aliases, not as upstream tables (unless they happen to
+    # appear with a db/catalog qualifier, which would mean they shadow a real
+    # table — rare, but possible).
+    cte_names = {cte.alias_or_name.lower() for cte in parsed.find_all(exp.CTE)}
 
     found: set[str] = set()
-    for match in _SQL_TABLE_RE.finditer(clean_sql):
-        full_ref = match.group(1).strip()
-        # Take only the last segment (bare table name) so it matches dbt model names
-        bare_name = full_ref.split(".")[-1].lower()
-        # Skip obvious SQL keywords that can appear after FROM (e.g. sub-queries)
-        if bare_name not in {"select", "where", "join", "on", "as", "with"}:
-            found.add(bare_name)
+    for clause in parsed.find_all(exp.From, exp.Join):
+        for table in clause.find_all(exp.Table):
+            name = (table.name or "").lower()
+            if not name or name == _PLACEHOLDER_TOKEN:
+                continue
+            if name in cte_names and not (table.db or table.catalog):
+                continue
+            found.add(name)
 
     return sorted(found)
 
+
+# ---------------------------------------------------------------------------
+# Python-cell SQL extraction
+# ---------------------------------------------------------------------------
+
+def _looks_like_sql(text: str) -> bool:
+    """Cheap heuristic: does this string look like a SELECT/CTE query?"""
+    if len(text.strip()) < 15:
+        return False
+    upper = text.upper().strip()
+    is_select = upper.startswith("SELECT")
+    is_cte = upper.startswith("WITH") and "SELECT" in upper
+    if not (is_select or is_cte):
+        return False
+    return "FROM" in upper
+
+
+def _extract_sql_strings_from_python(source: str) -> list[str]:
+    """
+    Walk a Python source cell and return SQL-looking string literals.
+
+    Handles both plain string constants and f-strings (``ast.JoinedStr``).
+    For f-strings the literal chunks are re-stitched with a ``{x}`` placeholder
+    in place of each ``FormattedValue`` so the resulting string is parseable —
+    otherwise ``ast.walk`` would visit each literal chunk in isolation and
+    split a SQL statement mid-clause.
+
+    Args:
+        source: Python source code for a single notebook cell.
+
+    Returns:
+        List of SQL-looking strings (de-duplicated, original order preserved).
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def _consider(text: str) -> None:
+        key = text.strip()
+        if not key or key in seen:
+            return
+        if not _looks_like_sql(key):
+            return
+        seen.add(key)
+        out.append(key)
+
+    def _visit(node: ast.AST) -> None:
+        if isinstance(node, ast.JoinedStr):
+            parts: list[str] = []
+            for value in node.values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    parts.append(value.value)
+                elif isinstance(value, ast.FormattedValue):
+                    parts.append("{x}")
+            _consider("".join(parts))
+            return  # do not descend into the literal chunks
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            _consider(node.value)
+        for child in ast.iter_child_nodes(node):
+            _visit(child)
+
+    _visit(tree)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Notebook parsing
+# ---------------------------------------------------------------------------
 
 def parse_notebook_file(file_path: Path) -> dict[str, Any]:
     """
     Parse a Snowflake Notebook ``.ipynb`` file and extract cell metadata.
 
     Each code cell is examined for:
-    - A ``title`` metadata attribute (Snowflake Notebooks extension)
-    - Its language (``sql`` or ``python``)
-    - SQL table references extracted via :func:`extract_tables_from_sql`
+      - A ``title`` metadata attribute (Snowflake Notebooks extension)
+      - Its language (``sql`` or ``python``)
+      - SQL table references — for SQL cells, extracted directly from the
+        cell source; for Python cells, extracted from any embedded SQL
+        string literals or f-strings (e.g. ``session.sql(f"…")``).
 
     The notebook description is taken from the first non-empty line of the
     first markdown cell (stripping any Markdown heading prefixes).
@@ -100,7 +198,7 @@ def parse_notebook_file(file_path: Path) -> dict[str, Any]:
               - ``cell_index``    (int)
               - ``title``         (str)
               - ``language``      (str)  ``"sql"`` or ``"python"``
-              - ``tables``        (list[str])  bare table names (SQL cells only)
+              - ``tables``        (list[str])  bare table names
               - ``source_snippet``(str)  first 200 chars of source for descriptions
     """
     logger.info(f"Parsing notebook: {file_path.name}")
@@ -131,8 +229,6 @@ def parse_notebook_file(file_path: Path) -> dict[str, Any]:
 
     for idx, cell in enumerate(nb_cells):
         cell_type: str = cell.get("cell_type", "")
-
-        # Only process code cells
         if cell_type != "code":
             continue
 
@@ -144,6 +240,11 @@ def parse_notebook_file(file_path: Path) -> dict[str, Any]:
         tables: list[str] = []
         if language == "sql":
             tables = extract_tables_from_sql(source)
+        elif language == "python":
+            collected: set[str] = set()
+            for sql_text in _extract_sql_strings_from_python(source):
+                collected.update(extract_tables_from_sql(sql_text))
+            tables = sorted(collected)
 
         if not title:
             title = f"Cell {idx + 1} ({language})"

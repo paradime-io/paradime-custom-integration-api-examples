@@ -399,9 +399,12 @@ def convert_to_paradime_nodes(
         if not tables:
             continue
 
+        # Always append line number so charts that share the nearest
+        # st.subheader (and would otherwise collide on name) remain distinct
+        # after Paradime upserts by node name.
         chart_name = (
-            row.get("chart_name")
-            or f"Unnamed {row['chart_type']} (Line {row['line_number']})"
+            f"{row.get('chart_name') or row['chart_type']} "
+            f"(Line {row['line_number']})"
         )
 
         chart_caption = row.get("chart_caption")

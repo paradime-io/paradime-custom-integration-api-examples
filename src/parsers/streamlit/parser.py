@@ -88,12 +88,33 @@ class SQLTableTracker:
             print(f"Error parsing {file_path}: {e}")
             return sql_queries
 
-        # Find all string literals that look like SQL
-        for node in ast.walk(tree):
+        # Find all string literals that look like SQL.
+        # Walk manually so we can intercept f-strings (ast.JoinedStr) and
+        # reconstruct them as a single string before their children are
+        # visited individually — otherwise each literal chunk between
+        # placeholders is treated as its own string, which splits a SQL
+        # statement mid-clause (e.g. "...FROM " and ".dbt_tableau_metrics..."
+        # become separate strings and the table name is lost).
+        def _visit(node: ast.AST) -> None:
+            if isinstance(node, ast.JoinedStr):
+                parts: list[str] = []
+                for value in node.values:
+                    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                        parts.append(value.value)
+                    elif isinstance(value, ast.FormattedValue):
+                        # Preserve a {…} placeholder so extract_tables_from_sql's
+                        # pre-processing step can substitute it before parsing.
+                        parts.append("{x}")
+                _add("".join(parts), getattr(node, "lineno", None))
+                return  # do not descend into the literal chunks
             if isinstance(node, ast.Str):
-                _add(node.s, node.lineno if hasattr(node, 'lineno') else None)
+                _add(node.s, getattr(node, "lineno", None))
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-                _add(node.value, node.lineno if hasattr(node, 'lineno') else None)
+                _add(node.value, getattr(node, "lineno", None))
+            for child in ast.iter_child_nodes(node):
+                _visit(child)
+
+        _visit(tree)
 
         # Regex fallback to catch f-strings and session.sql() patterns
         sql_pattern = r'session\.sql\s*\(\s*[f]?["\']+(.*?)["\']+'
@@ -154,9 +175,12 @@ class SQLTableTracker:
         tables = set()
         
         try:
-            # Pre-process SQL to handle f-string placeholders
-            # Replace {variable} with placeholder values that sqlglot can parse
-            processed_sql = re.sub(r'\{[^}]+\}', '1', sql)
+            # Pre-process SQL to handle f-string placeholders.
+            # Substitute {variable} with a valid SQL identifier so sqlglot
+            # treats the surrounding `db.schema.table` chain as identifiers
+            # rather than a numeric literal (replacing with '1' yields
+            # `1.1.table` which tokenises as the number 1.1).
+            processed_sql = re.sub(r'\{[^}]+\}', 'placeholder', sql)
             
             # Parse the SQL
             parsed = parse_one(processed_sql, dialect=dialect)
