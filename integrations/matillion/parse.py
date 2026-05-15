@@ -208,11 +208,121 @@ def _table_name_to_dbt_model(table_name: str) -> str:
     return table_name.lower()
 
 
+# Roles that always represent real data movement or orchestration —
+# emit a Job node unconditionally.
+_ALWAYS_EMIT_ROLES = {
+    "ingestion_input",
+    "reverse_etl_output",
+    "orchestrator_call",
+    "shared_pipeline_call",
+}
+
+
+def _component_is_data_bearing(component: dict[str, Any]) -> bool:
+    """
+    Decide whether a component should become a Paradime Job node.
+
+    The data axis only cares about components that:
+      - move data into Snowflake (ingestion connector)
+      - move data out of Snowflake (reverse-ETL connector)
+      - call another pipeline (orchestrator / shared-pipeline)
+      - run SQL that has BOTH a source and a target table
+
+    Everything else (control flow, variable juggling, debug prints, audit
+    inserts with no FROM clause, TRUNCATEs, webhook alerts) is skipped so
+    the Paradime UI shows only meaningful lineage nodes.
+    """
+    role = component.get("role")
+    if role in _ALWAYS_EMIT_ROLES:
+        return True
+    if role == "sql_transform":
+        # Only emit SQL jobs whose script produces a real source → target edge.
+        # Audit-table inserts, TRUNCATEs, and pure UPDATEs have a target but
+        # no source and contribute no lineage.
+        return bool(
+            component.get("sql_sources") and component.get("sql_targets")
+        )
+    return False
+
+
+def build_pipeline_index(
+    parsed_results: list[tuple[Path, dict[str, Any]]],
+) -> dict[str, str]:
+    """
+    Build a lookup so ``run-orchestration`` calls can resolve to a Pipeline node.
+
+    Maps the source-file *stem* (without ``.orch``) → the pipeline display name
+    emitted by :func:`parse_matillion_yaml`. Matillion's ``orchestrationJob``
+    parameter ends in the same identifier, so we can match on it directly.
+
+    Args:
+        parsed_results: List of ``(path, parsed_pipeline_dict)`` pairs.
+
+    Returns:
+        Dict from stem → pipeline_name.
+    """
+    index: dict[str, str] = {}
+    for path, parsed in parsed_results:
+        stem = path.stem
+        if stem.endswith(".orch"):
+            stem = stem[: -len(".orch")]
+        index[stem] = parsed["pipeline_name"]
+    return index
+
+
+def build_table_io_indexes(
+    parsed_results: list[tuple[Path, dict[str, Any]]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """
+    Index every Snowflake table touched by the parsed pipelines.
+
+    For each table, record which Job(s) produce it (write) and which Job(s)
+    consume it (read). The converter uses these indexes to short-circuit
+    Matillion-internal handoffs: when a table is produced and consumed
+    *within the parsed set*, the table node is dropped from lineage and a
+    direct Job → Job edge is emitted instead.
+
+    Sources of producer/consumer signal:
+      * ``sql-executor`` ``sql_targets`` / ``sql_sources``
+      * ``reverse_etl_output`` ``source_table`` (consumer)
+      * ``ingestion_input`` ``output_table`` (producer)
+
+    Args:
+        parsed_results: List of ``(path, parsed_pipeline_dict)`` pairs.
+
+    Returns:
+        ``(producers, consumers)`` — each is a dict mapping lowercased
+        ``table_name`` → list of fully-qualified Job names
+        (``"<pipeline_name>.<component_name>"``).
+    """
+    producers: dict[str, list[str]] = {}
+    consumers: dict[str, list[str]] = {}
+
+    for _path, parsed in parsed_results:
+        pipeline_name = parsed["pipeline_name"]
+        pipeline_type = parsed.get("pipeline_type", "unknown")
+        for comp in parsed.get("components", []):
+            job_name = f"{pipeline_name}.{comp['name']}"
+            for tgt in comp.get("sql_targets") or []:
+                producers.setdefault(tgt.lower(), []).append(job_name)
+            for src in comp.get("sql_sources") or []:
+                consumers.setdefault(src.lower(), []).append(job_name)
+            if pipeline_type == "reverse_etl" and comp.get("source_table"):
+                consumers.setdefault(comp["source_table"].lower(), []).append(job_name)
+            if pipeline_type == "ingestion" and comp.get("output_table"):
+                producers.setdefault(comp["output_table"].lower(), []).append(job_name)
+
+    return producers, consumers
+
+
 def convert_to_paradime_nodes(
     parsed_pipeline: dict[str, Any],
     repo_url: str,
     yaml_file_path: str,
     branch: str = "main",
+    pipeline_index: dict[str, str] | None = None,
+    table_producers: dict[str, list[str]] | None = None,
+    table_consumers: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Convert a parsed Matillion pipeline into a list of Paradime SDK node dicts.
@@ -252,6 +362,8 @@ def convert_to_paradime_nodes(
     type_label = {
         "ingestion": "ingestion (SaaS → Snowflake)",
         "reverse_etl": "reverse ETL (Snowflake → destination)",
+        "orchestrator": "orchestrator (calls other pipelines)",
+        "sql_transform": "SQL transform",
     }.get(pipeline_type, "orchestration")
 
     pipeline_description = description or (
@@ -274,27 +386,53 @@ def convert_to_paradime_nodes(
     nodes.append(pipeline_node)
 
     # ------------------------------------------------------------------
-    # 2. Job nodes  (one per non-Start component)
+    # 2. Job nodes  (one per data-bearing or orchestration component)
     # ------------------------------------------------------------------
     for component in components:
-        # Skip the Start pseudo-component – it's not a real job
-        if component["type"] == "start":
+        # Only emit Jobs for components that contribute to data lineage or
+        # orchestration. Everything else (control flow, audit SQL, debug
+        # prints, query-to-scalar variable updates, webhooks) is dropped.
+        if not _component_is_data_bearing(component):
             continue
 
+        comp_type: str = component["type"]
         comp_name: str = component["name"]
+        role: str = component["role"]
         output_table: str | None = component["output_table"]
         source_table: str | None = component["source_table"]
         endpoint: str | None = component["endpoint"]
         skipped: bool = component["skipped"]
+        sql_sources: list[str] = component.get("sql_sources", []) or []
+        sql_targets: list[str] = component.get("sql_targets", []) or []
+        called_pipeline: str | None = component.get("called_pipeline")
+        shared_pipeline_name: str | None = component.get("shared_pipeline_name")
+        shared_pipeline_vars: dict[str, str] = component.get("shared_pipeline_vars") or {}
 
-        # Build a readable description
-        action_parts = []
+        # Build a readable description from whatever signal the component carries
+        action_parts: list[str] = []
         if endpoint:
             action_parts.append(f"Calls the **{endpoint}** API endpoint")
         if pipeline_type == "ingestion" and output_table:
             action_parts.append(f"writes results to Snowflake table `{output_table}`")
         elif pipeline_type == "reverse_etl" and source_table:
             action_parts.append(f"reads from Snowflake table/view `{source_table}`")
+        if role == "sql_transform" and (sql_sources or sql_targets):
+            if sql_targets and sql_sources:
+                action_parts.append(
+                    f"runs SQL writing `{', '.join(sql_targets)}` from `{', '.join(sql_sources)}`"
+                )
+            elif sql_targets:
+                action_parts.append(f"runs SQL writing `{', '.join(sql_targets)}`")
+        if role == "orchestrator_call" and called_pipeline:
+            action_parts.append(f"runs orchestration `{called_pipeline}`")
+        if role == "shared_pipeline_call" and shared_pipeline_name:
+            dbt_id = shared_pipeline_vars.get("DBT_JOB_ID")
+            if dbt_id:
+                action_parts.append(
+                    f"runs shared pipeline `{shared_pipeline_name}` (dbt job `{dbt_id}`)"
+                )
+            else:
+                action_parts.append(f"runs shared pipeline `{shared_pipeline_name}`")
 
         if action_parts:
             job_description = " and ".join(action_parts)
@@ -314,23 +452,68 @@ def convert_to_paradime_nodes(
                 "node_name": pipeline_name,
             }
         ]
-
         job_downstream: list[dict[str, Any]] = []
 
-        if pipeline_type == "ingestion":
-            # Ingestion: Job writes to a Snowflake landing table
-            # Lineage: Matillion Job → Snowflake table ← dbt source
-            if output_table:
-                job_downstream.append(
-                    {"table_name": _table_name_to_dbt_model(output_table)}
-                )
+        producers_idx = table_producers or {}
+        consumers_idx = table_consumers or {}
+        own_job_full_name = f"{pipeline_name}.{comp_name}"
 
-        elif pipeline_type == "reverse_etl":
-            # Reverse ETL: Job reads from a dbt model/view and pushes to destination
-            # Lineage: dbt model → Matillion Job
-            if source_table:
-                job_upstream.append(
-                    {"table_name": _table_name_to_dbt_model(source_table)}
+        def _add_upstream_table(table: str) -> None:
+            """Add a table as an upstream dependency, unless it's produced by
+            another Matillion Job we parsed — in which case the producer's
+            downstream edge will create the connection directly and we skip
+            the table node entirely (no view-as-staging-node clutter)."""
+            key = table.lower()
+            if key in producers_idx:
+                # Internal Matillion handoff — producer Job will link to us
+                return
+            job_upstream.append({"table_name": _table_name_to_dbt_model(table)})
+
+        def _add_downstream_table(table: str) -> None:
+            """Add a table as a downstream dependency. If another Matillion
+            Job in the parsed set reads this table, replace the table edge
+            with direct Job → Job edges (the table is internal plumbing).
+            Otherwise keep the table_name so external assets (dbt, …) link."""
+            key = table.lower()
+            internal_consumers = consumers_idx.get(key, [])
+            internal_consumers = [c for c in internal_consumers if c != own_job_full_name]
+            if internal_consumers:
+                for consumer_full_name in internal_consumers:
+                    job_downstream.append({
+                        "integration_name": "Matillion",
+                        "node_type": "Job",
+                        "node_name": consumer_full_name,
+                    })
+                return
+            job_downstream.append({"table_name": _table_name_to_dbt_model(table)})
+
+        # ---- Data lineage from connector-style components -----------------
+        if pipeline_type == "ingestion" and output_table:
+            _add_downstream_table(output_table)
+        elif pipeline_type == "reverse_etl" and source_table:
+            _add_upstream_table(source_table)
+
+        # ---- Data lineage from sql-executor scripts -----------------------
+        # Works regardless of the parent pipeline_type. This is what connects
+        # dbt models → Matillion-built views → reverse-ETL pipelines.
+        for src in sql_sources:
+            _add_upstream_table(src)
+        for tgt in sql_targets:
+            _add_downstream_table(tgt)
+
+        # ---- Orchestration lineage: run-orchestration -> child Pipeline ---
+        if role == "orchestrator_call" and called_pipeline and pipeline_index:
+            resolved = pipeline_index.get(called_pipeline)
+            if resolved:
+                job_downstream.append({
+                    "integration_name": "Matillion",
+                    "node_type": "Pipeline",
+                    "node_name": resolved,
+                })
+            else:
+                logger.warning(
+                    f"  '{pipeline_name}' calls orchestration '{called_pipeline}' "
+                    "but no matching .orch.yaml was parsed — cross-pipeline edge skipped."
                 )
 
         job_node: dict[str, Any] = {
@@ -431,21 +614,43 @@ def extract_and_save_nodes(
     all_nodes: list[dict[str, Any]] = []
     failed_files: list[str] = []
     try:
+        # ---- Pass 1: parse every YAML so we can build the cross-pipeline
+        # index before emitting any nodes (otherwise run-orchestration calls
+        # can't resolve to a Pipeline node).
+        parsed_results: list[tuple[Path, dict[str, Any]]] = []
         for orch_file in orch_files:
-            # Relative path inside the repo (for building GitHub source links)
             relative_path = str(orch_file.relative_to(temp_dir))
-
             try:
                 parsed = parse_matillion_yaml(orch_file)
+            except Exception as exc:
+                logger.error(
+                    f"  Failed to parse '{orch_file.name}' — skipping. Error: {exc}"
+                )
+                failed_files.append(relative_path)
+                continue
+            parsed_results.append((orch_file, parsed))
+
+        pipeline_index = build_pipeline_index(parsed_results)
+        table_producers, table_consumers = build_table_io_indexes(parsed_results)
+
+        # ---- Pass 2: convert each parsed pipeline to Paradime nodes,
+        # using the indexes to resolve cross-pipeline orchestration edges
+        # and to collapse Matillion-internal table handoffs.
+        for orch_file, parsed in parsed_results:
+            relative_path = str(orch_file.relative_to(temp_dir))
+            try:
                 nodes = convert_to_paradime_nodes(
                     parsed_pipeline=parsed,
                     repo_url=repo_url,
                     yaml_file_path=relative_path,
                     branch=branch,
+                    pipeline_index=pipeline_index,
+                    table_producers=table_producers,
+                    table_consumers=table_consumers,
                 )
             except Exception as exc:
                 logger.error(
-                    f"  Failed to parse '{orch_file.name}' — skipping. Error: {exc}"
+                    f"  Failed to convert '{orch_file.name}' — skipping. Error: {exc}"
                 )
                 failed_files.append(relative_path)
                 continue
@@ -496,20 +701,35 @@ if __name__ == "__main__":
         target_dir.mkdir(parents=True, exist_ok=True)
         output_file = target_dir / "matillion_nodes.json"
 
-        all_nodes: list[dict] = []
+        # Pass 1: parse all files so we can build the cross-pipeline index
+        parsed_results: list[tuple[Path, dict]] = []
         for orch_file in orch_files:
             try:
                 parsed = parse_matillion_yaml(orch_file)
+                parsed_results.append((orch_file, parsed))
+            except Exception as exc:
+                logger.error(f"  Failed to parse '{orch_file.name}' — skipping. Error: {exc}")
+
+        pipeline_index = build_pipeline_index(parsed_results)
+        table_producers, table_consumers = build_table_io_indexes(parsed_results)
+
+        # Pass 2: convert with index lookup
+        all_nodes: list[dict] = []
+        for orch_file, parsed in parsed_results:
+            try:
                 nodes = convert_to_paradime_nodes(
                     parsed_pipeline=parsed,
                     repo_url=str(local_dir_path),
                     yaml_file_path=orch_file.name,
                     branch="local",
+                    pipeline_index=pipeline_index,
+                    table_producers=table_producers,
+                    table_consumers=table_consumers,
                 )
                 logger.info(f"  '{orch_file.name}' → {len(nodes)} node(s) (1 pipeline + {len(nodes) - 1} job(s))")
                 all_nodes.extend(nodes)
             except Exception as exc:
-                logger.error(f"  Failed to parse '{orch_file.name}' — skipping. Error: {exc}")
+                logger.error(f"  Failed to convert '{orch_file.name}' — skipping. Error: {exc}")
 
         output_file.write_text(json.dumps(all_nodes, indent=2), encoding="utf-8")
         logger.info(f"Saved {len(all_nodes)} total nodes to {output_file}")
@@ -529,11 +749,18 @@ if __name__ == "__main__":
         output_file = target_dir / "matillion_nodes.json"
 
         parsed = parse_matillion_yaml(local_path)
+        # Single-file mode: only this file in the index, so cross-pipeline
+        # edges to other files will resolve to "unknown" and be logged.
+        pipeline_index = build_pipeline_index([(local_path, parsed)])
+        table_producers, table_consumers = build_table_io_indexes([(local_path, parsed)])
         nodes = convert_to_paradime_nodes(
             parsed_pipeline=parsed,
             repo_url=str(local_path.parent),
             yaml_file_path=local_path.name,
             branch="local",
+            pipeline_index=pipeline_index,
+            table_producers=table_producers,
+            table_consumers=table_consumers,
         )
         logger.info(f"Generated {len(nodes)} node(s) (1 pipeline + {len(nodes) - 1} job(s))")
 
